@@ -1,0 +1,2 @@
+Hello! Put any text you want here and run:
+python src/main.py --file .\sample.txt

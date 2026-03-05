@@ -1,4 +1,4 @@
-﻿# SnapNarrate v2
+﻿# SnapNarrate
 
 Windows game narrator that:
 1. Captures the screen on hotkey press

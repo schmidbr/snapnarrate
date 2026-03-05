@@ -1,9 +1,9 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from dataclasses import dataclass
 
-from screen_reader.models import ExtractResult
-from screen_reader.pipeline import NarrationPipeline
+from snap_narrate.models import ExtractResult
+from snap_narrate.pipeline import NarrationPipeline
 
 
 class FakeExtractor:
@@ -108,3 +108,4 @@ def test_pipeline_skip_when_no_text() -> None:
 
     result = pipeline.process_capture(b"img")
     assert result.status == "skip"
+

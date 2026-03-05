@@ -1,12 +1,12 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 import logging
 import re
 from typing import Any
 
-from screen_reader.models import ExtractResult
-from screen_reader.usage import record_openai_usage
+from snap_narrate.models import ExtractResult
+from snap_narrate.usage import record_openai_usage
 
 
 def parse_extraction_payload(raw_content: str) -> ExtractResult:
@@ -109,7 +109,7 @@ class OpenAIVisionExtractor:
             record_openai_usage(usage_payload)
         raw_content = data["choices"][0]["message"]["content"]
         result = parse_extraction_payload(raw_content)
-        logging.getLogger("screen_reader").info(
+        logging.getLogger("snap_narrate").info(
             "event=extract_result chars=%s confidence=%.2f dropped_reason=%s",
             len(result.text),
             result.confidence,
@@ -335,7 +335,7 @@ class OllamaVisionExtractor:
                 result = ExtractResult(text=joined, confidence=avg_conf, dropped_reason="pass2_fallback_join")
 
         final_chars = len(result.text)
-        logging.getLogger("screen_reader").info(
+        logging.getLogger("snap_narrate").info(
             "event=extract_result provider=ollama chars=%s confidence=%.2f dropped_reason=%s paragraph_count=%s retry_used=%s coverage_low=%s final_chars=%s",
             len(result.text),
             result.confidence,
@@ -424,7 +424,7 @@ class OllamaVisionExtractor:
         raw_content = self._extract_ollama_content(data)
         paragraphs, dropped_reason = parse_paragraph_collection_payload(raw_content)
         if not paragraphs and dropped_reason in {"malformed_json", "empty_response"}:
-            logging.getLogger("screen_reader").warning(
+            logging.getLogger("snap_narrate").warning(
                 "event=ollama_paragraph_parse_warning dropped_reason=%s response_keys=%s raw_preview=%s",
                 dropped_reason,
                 sorted(data.keys()),
@@ -492,3 +492,4 @@ class OllamaVisionExtractor:
                 "top_p": self.top_p,
             },
         }
+

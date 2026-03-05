@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import threading
 import time
@@ -6,7 +6,7 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from typing import Any
 
-from screen_reader.config import AppConfig
+from snap_narrate.config import AppConfig
 
 
 USAGE_STATUS_OK = "ok"
@@ -305,3 +305,4 @@ class UsageService:
             )
         except Exception:
             return ElevenLabsUsageSnapshot(status=USAGE_STATUS_PARSE_ERROR)
+

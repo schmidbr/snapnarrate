@@ -1,11 +1,11 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import logging
 import time
 from typing import Callable, Protocol
 
-from screen_reader.models import ExtractResult, PipelineResult
-from screen_reader.text_processing import TextDeduper, normalize_text
+from snap_narrate.models import ExtractResult, PipelineResult
+from snap_narrate.text_processing import TextDeduper, normalize_text
 
 
 class VisionExtractor(Protocol):
@@ -45,7 +45,7 @@ class NarrationPipeline:
         self.retry_count = retry_count
         self.retry_backoff_ms = retry_backoff_ms
         self.sleep_fn = sleep_fn
-        self.logger = logging.getLogger("screen_reader")
+        self.logger = logging.getLogger("snap_narrate")
 
     def process_capture(self, image_bytes: bytes, game_profile: str = "default") -> PipelineResult:
         extract = self.extractor.extract_narrative_text(image_bytes=image_bytes, game_profile=game_profile)
@@ -81,3 +81,4 @@ class NarrationPipeline:
                 backoff_sec = (self.retry_backoff_ms / 1000.0) * (2**attempt)
                 self.sleep_fn(backoff_sec)
         return None
+

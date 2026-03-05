@@ -1,8 +1,8 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
-from screen_reader.config import AppConfig
-from screen_reader.openai_client import OllamaVisionExtractor, OpenAIVisionExtractor
-from screen_reader.pipeline import VisionExtractor
+from snap_narrate.config import AppConfig
+from snap_narrate.openai_client import OllamaVisionExtractor, OpenAIVisionExtractor
+from snap_narrate.pipeline import VisionExtractor
 
 
 def build_extractor(cfg: AppConfig) -> VisionExtractor:
@@ -30,3 +30,4 @@ def build_extractor(cfg: AppConfig) -> VisionExtractor:
             coverage_retry_attempts=cfg.ollama.coverage_retry_attempts,
         )
     raise ValueError(f"Unsupported vision.provider: {cfg.vision.provider}")
+

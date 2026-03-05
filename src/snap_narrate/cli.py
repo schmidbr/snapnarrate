@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import argparse
 import ctypes
@@ -7,19 +7,19 @@ import sys
 import time
 from pathlib import Path
 
-from screen_reader.config import DEFAULT_CONFIG_PATH, init_config, load_config
-from screen_reader.extractor_factory import build_extractor
-from screen_reader.icon_utils import icon_asset_path
-from screen_reader.launch import launch_command, resolve_default_config_path
-from screen_reader.logging_utils import setup_logging
-from screen_reader.shortcuts import ShortcutManager
-from screen_reader.startup import StartupManager
-from screen_reader.ui import launch_settings_ui_with_startup
-from screen_reader.usage import UsageService
+from snap_narrate.config import DEFAULT_CONFIG_PATH, init_config, load_config
+from snap_narrate.extractor_factory import build_extractor
+from snap_narrate.icon_utils import icon_asset_path
+from snap_narrate.launch import launch_command, resolve_default_config_path
+from snap_narrate.logging_utils import setup_logging
+from snap_narrate.shortcuts import ShortcutManager
+from snap_narrate.startup import StartupManager
+from snap_narrate.ui import launch_settings_ui_with_startup
+from snap_narrate.usage import UsageService
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="screen-reader", description="Game narrator screen reader")
+    parser = argparse.ArgumentParser(prog="snapnarrate", description="SnapNarrate game narrator")
     sub = parser.add_subparsers(dest="command", required=True)
 
     run = sub.add_parser("run", help="Run the hotkey + tray narrator")
@@ -64,7 +64,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _required_settings_missing(cfg: object) -> bool:
-    from screen_reader.config import AppConfig
+    from snap_narrate.config import AppConfig
 
     if not isinstance(cfg, AppConfig):
         return True
@@ -78,10 +78,10 @@ def _required_settings_missing(cfg: object) -> bool:
 
 
 def run_command(config_path: Path, game_profile: str, auto_launch: bool = False) -> int:
-    from screen_reader.capture import ScreenCapturer
-    from screen_reader.elevenlabs_client import ElevenLabsClient, TempFileAudioPlayer
-    from screen_reader.pipeline import NarrationPipeline
-    from screen_reader.runtime import ScreenReaderRuntime
+    from snap_narrate.capture import ScreenCapturer
+    from snap_narrate.elevenlabs_client import ElevenLabsClient, TempFileAudioPlayer
+    from snap_narrate.pipeline import NarrationPipeline
+    from snap_narrate.runtime import SnapNarrateRuntime
 
     def build_runtime_parts(config_file: Path) -> dict[str, object]:
         cfg = load_config(config_file)
@@ -131,10 +131,10 @@ def run_command(config_path: Path, game_profile: str, auto_launch: bool = False)
 
     parts = build_runtime_parts(config_path)
     log_path = setup_logging(str(parts["log_path"]))
-    startup_notice = "Screen Reader is running in tray." if auto_launch else None
+    startup_notice = "SnapNarrate is running in tray." if auto_launch else None
     if auto_launch and cfg_for_bootstrap.vision.provider == "ollama":
-        startup_notice = "Screen Reader is running. If extraction fails, open tray > Settings."
-    runtime = ScreenReaderRuntime(
+        startup_notice = "SnapNarrate is running. If extraction fails, open tray > Settings."
+    runtime = SnapNarrateRuntime(
         capturer=parts["capturer"],  # type: ignore[arg-type]
         pipeline=parts["pipeline"],  # type: ignore[arg-type]
         hotkey=str(parts["hotkey"]),
@@ -258,7 +258,7 @@ def doctor_command(config_path: Path) -> int:
 
 
 def voices_command(config_path: Path) -> int:
-    from screen_reader.elevenlabs_client import ElevenLabsClient
+    from snap_narrate.elevenlabs_client import ElevenLabsClient
 
     cfg = load_config(config_path)
     client = ElevenLabsClient(
@@ -274,7 +274,7 @@ def voices_command(config_path: Path) -> int:
 
 
 def test_capture_command(config_path: Path, game_profile: str) -> int:
-    from screen_reader.capture import ScreenCapturer
+    from snap_narrate.capture import ScreenCapturer
 
     cfg = load_config(config_path)
     capturer = ScreenCapturer(
@@ -421,3 +421,4 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+

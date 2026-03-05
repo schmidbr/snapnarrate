@@ -1,4 +1,4 @@
-param(
+﻿param(
     [switch]$InstallDeps
 )
 
@@ -11,11 +11,11 @@ if ($InstallDeps) {
     py -m pip install --upgrade pyinstaller
 }
 
-$IconPath = Join-Path $ProjectRoot "assets\screen-reader.ico"
-$Entry = Join-Path $ProjectRoot "src\screen_reader\__main__.py"
+$IconPath = Join-Path $ProjectRoot "assets\snapnarrate.ico"
+$Entry = Join-Path $ProjectRoot "src\snap_narrate\__main__.py"
 $DistPath = Join-Path $ProjectRoot "dist"
-$BuildPath = Join-Path $env:TEMP "screen-reader-pyinstaller-build"
-$ExePath = Join-Path $DistPath "screen-reader.exe"
+$BuildPath = Join-Path $env:TEMP "snapnarrate-pyinstaller-build"
+$ExePath = Join-Path $DistPath "snapnarrate.exe"
 
 if (Test-Path $BuildPath) {
   Remove-Item -Recurse -Force $BuildPath -ErrorAction SilentlyContinue
@@ -23,8 +23,8 @@ if (Test-Path $BuildPath) {
 New-Item -ItemType Directory -Force -Path $BuildPath | Out-Null
 New-Item -ItemType Directory -Force -Path $DistPath | Out-Null
 
-# Stop any running screen-reader process to avoid file lock on dist\screen-reader.exe
-Get-Process | Where-Object { $_.ProcessName -eq "screen-reader" } | ForEach-Object {
+# Stop any running snapnarrate process to avoid file lock on dist\snapnarrate.exe
+Get-Process | Where-Object { $_.ProcessName -eq "snapnarrate" } | ForEach-Object {
   try { Stop-Process -Id $_.Id -Force -ErrorAction Stop } catch {}
 }
 
@@ -44,7 +44,7 @@ py -m PyInstaller `
   --noconfirm `
   --clean `
   --onefile `
-  --name "screen-reader" `
+  --name "snapnarrate" `
   --icon "$IconPath" `
   --distpath "$DistPath" `
   --workpath "$BuildPath" `
@@ -54,9 +54,11 @@ if ($LASTEXITCODE -ne 0) {
   throw "PyInstaller build failed with exit code $LASTEXITCODE"
 }
 
-& "$DistPath\screen-reader.exe" --help | Out-Null
+& "$DistPath\snapnarrate.exe" --help | Out-Null
 if ($LASTEXITCODE -ne 0) {
-  throw "Smoke check failed: screen-reader.exe --help"
+  throw "Smoke check failed: snapnarrate.exe --help"
 }
 
-Write-Host "Build complete: $DistPath\\screen-reader.exe"
+Write-Host "Build complete: $DistPath\\snapnarrate.exe"
+
+

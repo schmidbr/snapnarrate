@@ -1,7 +1,7 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
-from screen_reader.models import ExtractResult
-from screen_reader.openai_client import (
+from snap_narrate.models import ExtractResult
+from snap_narrate.openai_client import (
     build_extraction_prompt,
     build_paragraph_collection_prompt,
     is_likely_truncated,
@@ -64,3 +64,4 @@ def test_paragraph_collection_prompt_requires_ordering() -> None:
     prompt = build_paragraph_collection_prompt(4, "default", strict=True)
     assert "ordered top-to-bottom and left-to-right" in prompt
     assert "Include every visible narrative paragraph" in prompt
+

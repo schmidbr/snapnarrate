@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import logging
 from pathlib import Path
@@ -8,7 +8,7 @@ def setup_logging(log_file: str) -> Path:
     path = Path(log_file)
     path.parent.mkdir(parents=True, exist_ok=True)
 
-    logger = logging.getLogger("screen_reader")
+    logger = logging.getLogger("snap_narrate")
     logger.setLevel(logging.INFO)
 
     if not logger.handlers:
@@ -18,3 +18,4 @@ def setup_logging(log_file: str) -> Path:
         logger.addHandler(handler)
 
     return path
+

@@ -1,8 +1,8 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from pathlib import Path
 
-from screen_reader.config import load_config, save_config
+from snap_narrate.config import load_config, save_config
 
 
 def test_load_config_reads_stop_hotkey(tmp_path: Path) -> None:
@@ -81,3 +81,4 @@ def test_save_config_round_trip(tmp_path: Path) -> None:
     assert loaded.app.run_at_startup is True
     assert loaded.usage.openai_monthly_budget_usd == 12.5
     assert loaded.usage.cache_seconds == 42
+

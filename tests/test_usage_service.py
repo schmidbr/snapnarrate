@@ -1,6 +1,6 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
-from screen_reader.usage import (
+from snap_narrate.usage import (
     USAGE_STATUS_OK,
     USAGE_STATUS_UNAUTHORIZED,
     UsageService,
@@ -83,3 +83,4 @@ def test_usage_service_openai_falls_back_to_session_on_unauthorized(monkeypatch)
     assert snap.openai.total_tokens >= 40
     assert snap.openai.remaining_usd is None
     assert snap.elevenlabs.status == USAGE_STATUS_UNAUTHORIZED
+

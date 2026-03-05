@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import subprocess
 from pathlib import Path
@@ -9,7 +9,7 @@ def _ps_quote(value: str) -> str:
 
 
 class ShortcutManager:
-    def __init__(self, app_name: str = "Screen Reader") -> None:
+    def __init__(self, app_name: str = "SnapNarrate") -> None:
         self.app_name = app_name
 
     @property
@@ -31,7 +31,7 @@ class ShortcutManager:
         arguments: str,
         working_dir: str,
         icon_path: str | None = None,
-        description: str = "Screen Reader",
+        description: str = "SnapNarrate",
     ) -> Path:
         destination.parent.mkdir(parents=True, exist_ok=True)
         script = [
@@ -67,7 +67,7 @@ class ShortcutManager:
             arguments=arguments,
             working_dir=working_dir,
             icon_path=icon_path,
-            description="Screen Reader Launcher",
+            description="SnapNarrate Launcher",
         )
 
     def create_startup_shortcut(
@@ -83,7 +83,7 @@ class ShortcutManager:
             arguments=arguments,
             working_dir=working_dir,
             icon_path=icon_path,
-            description="Screen Reader Startup",
+            description="SnapNarrate Startup",
         )
 
     def _run_powershell(self, script: str) -> None:
@@ -96,4 +96,5 @@ class ShortcutManager:
         if result.returncode != 0:
             stderr = (result.stderr or "").strip()
             raise RuntimeError(f"Failed to create shortcut: {stderr}")
+
 

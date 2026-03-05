@@ -1,6 +1,6 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
-from screen_reader.text_processing import TextDeduper
+from snap_narrate.text_processing import TextDeduper
 
 
 def test_deduper_exact_duplicate() -> None:
@@ -21,3 +21,4 @@ def test_deduper_new_text() -> None:
     deduper = TextDeduper(0.98)
     assert deduper.seen_recently("Narrative one with text") is False
     assert deduper.seen_recently("Completely different lore entry") is False
+

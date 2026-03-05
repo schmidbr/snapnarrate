@@ -1,8 +1,8 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from pathlib import Path
 
-from screen_reader.shortcuts import ShortcutManager
+from snap_narrate.shortcuts import ShortcutManager
 
 
 class StartupManager:
@@ -26,4 +26,5 @@ class StartupManager:
 
     def disable(self) -> bool:
         return self.shortcut_manager.remove_shortcut(self.shortcut_manager.startup_shortcut_path())
+
 

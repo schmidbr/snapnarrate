@@ -1,10 +1,10 @@
-# Screen Reader Capabilities
+﻿# SnapNarrate Capabilities
 
 Last updated: 2026-03-06
 
 ## Overview
 
-Screen Reader v2 is a Windows-first game narrator that captures screenshots, extracts long-form narrative text with either OpenAI or Ollama vision, and plays speech with ElevenLabs.
+SnapNarrate v2 is a Windows-first game narrator that captures screenshots, extracts long-form narrative text with either OpenAI or Ollama vision, and plays speech with ElevenLabs.
 
 ## Core Capabilities
 
@@ -73,7 +73,7 @@ Managed via `config.toml`:
 
 ## Diagnostics and Reliability
 
-- Structured runtime log file at `logs/screen-reader.log`
+- Structured runtime log file at `logs/snapnarrate.log`
 - Hotkey registration status surfaced via tray notification and log entries
 - `doctor` validates required settings and warns when not elevated
 - `doctor` includes warning-level checks for OpenAI org usage endpoint access and ElevenLabs subscription endpoint reachability
@@ -86,3 +86,4 @@ Managed via `config.toml`:
 - Requires network access for OpenAI and ElevenLabs; Ollama local mode requires a local Ollama server
 - API keys are currently file/env based (not yet in OS credential vault)
 - Output quality depends on game UI readability and model extraction confidence
+

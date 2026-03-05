@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import os
 import tomllib
@@ -100,7 +100,7 @@ class AppConfig:
     debug: DebugConfig
     app: AppBehaviorConfig
     usage: UsageConfig
-    log_file: str = "logs/screen-reader.log"
+    log_file: str = "logs/snapnarrate.log"
 
 
 def _section(data: dict[str, Any], key: str) -> dict[str, Any]:
@@ -191,7 +191,7 @@ def load_config(path: Path) -> AppConfig:
             openai_monthly_budget_usd=budget_value,
             cache_seconds=int(usage_data.get("cache_seconds", UsageConfig.cache_seconds)),
         ),
-        log_file=str(content.get("log_file", "logs/screen-reader.log")),
+        log_file=str(content.get("log_file", "logs/snapnarrate.log")),
     )
 
     cfg.openai.api_key = os.getenv("OPENAI_API_KEY", cfg.openai.api_key)
@@ -206,10 +206,10 @@ def load_config(path: Path) -> AppConfig:
     cfg.elevenlabs.model_id = os.getenv("ELEVENLABS_MODEL_ID", cfg.elevenlabs.model_id)
     cfg.elevenlabs.output_format = os.getenv("ELEVENLABS_OUTPUT_FORMAT", cfg.elevenlabs.output_format)
 
-    hotkey = os.getenv("SCREEN_READER_HOTKEY")
+    hotkey = os.getenv("SNAPNARRATE_HOTKEY")
     if hotkey:
         cfg.capture.hotkey = hotkey
-    stop_hotkey = os.getenv("SCREEN_READER_STOP_HOTKEY")
+    stop_hotkey = os.getenv("SNAPNARRATE_STOP_HOTKEY")
     if stop_hotkey:
         cfg.capture.stop_hotkey = stop_hotkey
     cfg.ollama.base_url = os.getenv("OLLAMA_BASE_URL", cfg.ollama.base_url)
@@ -237,8 +237,8 @@ def init_config(path: Path, force: bool = False) -> Path:
     if path.exists() and not force:
         raise FileExistsError(f"Config already exists: {path}")
 
-    template = """# Screen Reader v2 config
-log_file = "logs/screen-reader.log"
+    template = """# SnapNarrate v2 config
+log_file = "logs/snapnarrate.log"
 
 [vision]
 provider = "openai"
@@ -305,7 +305,7 @@ def _toml_str(value: str) -> str:
 
 
 def render_config(cfg: AppConfig) -> str:
-    return f"""# Screen Reader v2 config
+    return f"""# SnapNarrate v2 config
 log_file = {_toml_str(cfg.log_file)}
 
 [vision]
@@ -368,3 +368,4 @@ cache_seconds = {cfg.usage.cache_seconds}
 def save_config(path: Path, cfg: AppConfig) -> Path:
     path.write_text(render_config(cfg), encoding="utf-8")
     return path
+

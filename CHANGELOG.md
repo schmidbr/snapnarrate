@@ -1,4 +1,4 @@
-# Changelog
+﻿# Changelog
 
 All notable changes to this project are documented in this file.
 
@@ -7,7 +7,7 @@ All notable changes to this project are documented in this file.
 ### Added
 
 - Usage and credits reporting service with normalized OpenAI + ElevenLabs snapshot output.
-- New CLI command: `screen-reader usage [--json]`.
+- New CLI command: `snapnarrate usage [--json]`.
 - Tray action: `Usage & Credits` notification summary.
 - OpenAI session token usage tracker for fallback reporting when org usage endpoints are unavailable.
 - ElevenLabs subscription usage endpoint integration (`/v1/user/subscription`).
@@ -38,7 +38,7 @@ All notable changes to this project are documented in this file.
   - tray startup toggle
   - settings UI startup checkbox
   - startup-folder based autorun support
-  - tray icon asset (`assets/screen-reader.ico`)
+  - tray icon asset (`assets/snapnarrate.ico`)
   - EXE build script (`scripts/build.ps1`)
   - no-argument EXE auto-run with config auto-discovery and first-run setup UI
   - startup state controls in tray and settings UI (`app.run_at_startup`)
@@ -62,7 +62,7 @@ All notable changes to this project are documented in this file.
   - runtime orchestration with worker thread
 - System tray app controls and global hotkeys.
 - Stop-speaking workflow with dedicated hotkey and tray action.
-- Desktop settings UI (`screen-reader ui`) for editing API keys and app settings.
+- Desktop settings UI (`snapnarrate ui`) for editing API keys and app settings.
 - Config read/write helpers and richer `config.toml` surface.
 - Expanded CLI commands: `run`, `doctor`, `voices`, `test-capture`, `ui`, `config init`.
 - Test suite for parser, audio handling, dedup, pipeline behavior, and config round-trip.
@@ -81,7 +81,7 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
-- `py -m screen_reader.cli ...` no-op behavior by adding CLI module entrypoint.
+- `py -m snap_narrate.cli ...` no-op behavior by adding CLI module entrypoint.
 - Audio payload handling for non-PCM outputs and malformed payload lengths.
 - Settings window close flow requiring force kill.
 - Hotkey observability and fallback tray actions for capture troubleshooting.
@@ -93,3 +93,4 @@ All notable changes to this project are documented in this file.
 - Initial project scaffold.
 - Basic text-to-speech CLI using local `pyttsx3`.
 - Starter files: README, requirements, sample text, git setup.
+

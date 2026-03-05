@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import os
 import sys
@@ -16,8 +16,8 @@ def executable_target() -> Path:
 def appdata_config_path() -> Path:
     appdata = os.getenv("APPDATA")
     if appdata:
-        return Path(appdata) / "ScreenReader" / "config.toml"
-    return Path.home() / "AppData" / "Roaming" / "ScreenReader" / "config.toml"
+        return Path(appdata) / "SnapNarrate" / "config.toml"
+    return Path.home() / "AppData" / "Roaming" / "SnapNarrate" / "config.toml"
 
 
 def resolve_default_config_path() -> Path:
@@ -40,6 +40,7 @@ def launch_command(config_path: Path, include_args: bool = True) -> tuple[str, s
 
     # Dev mode / non-frozen fallback.
     python_bin = str(executable_target())
-    args = f'-m screen_reader run --config "{cfg}" --game-profile default' if include_args else "-m screen_reader"
+    args = f'-m snap_narrate run --config "{cfg}" --game-profile default' if include_args else "-m snap_narrate"
     workdir = str(Path.cwd())
     return python_bin, args, workdir
+

@@ -1,11 +1,11 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import tkinter as tk
 from pathlib import Path
 from tkinter import messagebox, ttk
 
-from screen_reader.config import AppConfig, init_config, load_config, save_config
-from screen_reader.startup import StartupManager
+from snap_narrate.config import AppConfig, init_config, load_config, save_config
+from snap_narrate.startup import StartupManager
 
 
 class SettingsUI:
@@ -18,7 +18,7 @@ class SettingsUI:
         if self.startup_manager:
             self.cfg.app.run_at_startup = self.startup_manager.is_enabled()
         self.root = tk.Tk()
-        self.root.title("Screen Reader Settings")
+        self.root.title("SnapNarrate Settings")
         self.root.geometry("800x760")
         self.root.minsize(760, 640)
         self.root.protocol("WM_DELETE_WINDOW", self._close)
@@ -304,3 +304,4 @@ def launch_settings_ui(config_path: Path) -> int:
 def launch_settings_ui_with_startup(config_path: Path, startup_manager: StartupManager | None) -> int:
     ui = SettingsUI(config_path, startup_manager=startup_manager)
     return ui.run()
+

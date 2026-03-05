@@ -1,9 +1,9 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import numpy as np
 import pytest
 
-from screen_reader.elevenlabs_client import TempFileAudioPlayer
+from snap_narrate.elevenlabs_client import TempFileAudioPlayer
 
 
 def test_audio_from_bytes_valid_even_length_pcm() -> None:
@@ -23,3 +23,4 @@ def test_audio_from_bytes_odd_length_trims_last_byte() -> None:
 def test_audio_from_bytes_invalid_mp3_payload() -> None:
     with pytest.raises(RuntimeError, match="Failed to decode MP3 payload"):
         TempFileAudioPlayer.audio_from_bytes(b"ID3" + b"\x00" * 10)
+

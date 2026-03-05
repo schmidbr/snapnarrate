@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import logging
 import threading
@@ -12,11 +12,11 @@ import pystray
 from PIL import Image
 from pystray import Menu, MenuItem
 
-from screen_reader.icon_utils import load_tray_icon
-from screen_reader.capture import ScreenCapturer
-from screen_reader.pipeline import NarrationPipeline
-from screen_reader.startup import StartupManager
-from screen_reader.usage import UsageService
+from snap_narrate.icon_utils import load_tray_icon
+from snap_narrate.capture import ScreenCapturer
+from snap_narrate.pipeline import NarrationPipeline
+from snap_narrate.startup import StartupManager
+from snap_narrate.usage import UsageService
 
 
 @dataclass
@@ -24,7 +24,7 @@ class RuntimeState:
     paused: bool = False
 
 
-class ScreenReaderRuntime:
+class SnapNarrateRuntime:
     def __init__(
         self,
         capturer: ScreenCapturer,
@@ -52,7 +52,7 @@ class ScreenReaderRuntime:
         self.startup_notice = startup_notice
 
         self.state = RuntimeState(paused=False)
-        self.logger = logging.getLogger("screen_reader")
+        self.logger = logging.getLogger("snap_narrate")
 
         self._running = threading.Event()
         self._running.set()
@@ -71,7 +71,7 @@ class ScreenReaderRuntime:
     def start(self) -> None:
         self._worker.start()
         self._register_hotkeys()
-        self._icon = pystray.Icon("ScreenReader", self._make_icon(), "Screen Reader", self._tray_menu())
+        self._icon = pystray.Icon("SnapNarrate", self._make_icon(), "SnapNarrate", self._tray_menu())
         self._icon.run_detached()
         if self.startup_notice:
             self._notify(self.startup_notice)
@@ -84,7 +84,7 @@ class ScreenReaderRuntime:
             self._stop_hotkey_ok,
         )
         print(
-            f"Screen Reader running. Capture: {self.hotkey}. Stop speaking: {self.stop_hotkey}. "
+            f"SnapNarrate running. Capture: {self.hotkey}. Stop speaking: {self.stop_hotkey}. "
             "Use tray icon to pause or exit."
         )
 
@@ -171,7 +171,7 @@ class ScreenReaderRuntime:
 
     def _tray_test_voice(self, icon: pystray.Icon, item: MenuItem) -> None:  # noqa: ARG002
         try:
-            test_tone = self.pipeline.tts.synthesize("Screen Reader voice test.")
+            test_tone = self.pipeline.tts.synthesize("SnapNarrate voice test.")
             self.pipeline.player.play(test_tone)
             self._notify("Voice test played")
         except Exception as exc:  # noqa: BLE001
@@ -220,7 +220,7 @@ class ScreenReaderRuntime:
     def _notify(self, message: str) -> None:
         if self._icon:
             try:
-                self._icon.notify(message, "Screen Reader")
+                self._icon.notify(message, "SnapNarrate")
             except Exception:  # noqa: BLE001
                 pass
 
@@ -237,7 +237,7 @@ class ScreenReaderRuntime:
                 if not self.config_path:
                     self._notify("Usage unavailable: no config path")
                     return
-                from screen_reader.config import load_config
+                from snap_narrate.config import load_config
 
                 self.usage_service = UsageService.from_config(load_config(self.config_path))
             snapshot = self.usage_service.get_snapshot(force_refresh=True)
@@ -268,7 +268,7 @@ class ScreenReaderRuntime:
 
         def run_settings() -> None:
             try:
-                from screen_reader.ui import launch_settings_ui_with_startup
+                from snap_narrate.ui import launch_settings_ui_with_startup
 
                 launch_settings_ui_with_startup(self.config_path, self.startup_manager)
             except Exception as exc:  # noqa: BLE001
@@ -329,7 +329,7 @@ class ScreenReaderRuntime:
         if not self.config_path:
             return
         try:
-            from screen_reader.config import load_config, save_config
+            from snap_narrate.config import load_config, save_config
 
             cfg = load_config(self.config_path)
             cfg.app.run_at_startup = enabled
@@ -387,3 +387,4 @@ class ScreenReaderRuntime:
     @staticmethod
     def _make_icon() -> Image.Image:
         return load_tray_icon()
+

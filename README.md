@@ -1,4 +1,4 @@
-# Screen Reader v2
+﻿# SnapNarrate v2
 
 Windows game narrator that:
 1. Captures the screen on hotkey press
@@ -30,7 +30,7 @@ Windows game narrator that:
 ## Install
 
 ```powershell
-cd C:\Users\brend\OneDrive\Documents\Projects\screen-reader
+cd C:\Users\brend\OneDrive\Documents\Projects\snapnarrate
 py -m venv .venv
 .\.venv\Scripts\Activate.ps1
 py -m pip install -r requirements.txt
@@ -42,14 +42,14 @@ py -m pip install -r requirements.txt
 
 ```powershell
 $env:PYTHONPATH="src"
-py -m screen_reader config init --config config.toml
+py -m snap_narrate config init --config config.toml
 ```
 
 2. Open settings UI:
 
 ```powershell
 $env:PYTHONPATH="src"
-py -m screen_reader ui --config config.toml
+py -m snap_narrate ui --config config.toml
 ```
 
 3. Fill in:
@@ -67,15 +67,15 @@ py -m screen_reader ui --config config.toml
 
 ```powershell
 $env:PYTHONPATH="src"
-py -m screen_reader doctor --config config.toml
+py -m snap_narrate doctor --config config.toml
 ```
 
 ## Run
 
 ```powershell
-cd C:\Users\brend\OneDrive\Documents\Projects\screen-reader
+cd C:\Users\brend\OneDrive\Documents\Projects\snapnarrate
 $env:PYTHONPATH="src"
-py -m screen_reader run --config config.toml --game-profile default
+py -m snap_narrate run --config config.toml --game-profile default
 ```
 
 Then:
@@ -85,36 +85,36 @@ Then:
 
 ### EXE Zero-Click Behavior
 
-- Launching `screen-reader.exe` with no arguments now auto-starts tray runtime.
+- Launching `snapnarrate.exe` with no arguments now auto-starts tray runtime.
 - Config resolution order for no-arg launch:
   1. `config.toml` next to the EXE
-  2. `%APPDATA%\ScreenReader\config.toml`
-  3. If missing, auto-create `%APPDATA%\ScreenReader\config.toml`
+  2. `%APPDATA%\SnapNarrate\config.toml`
+  3. If missing, auto-create `%APPDATA%\SnapNarrate\config.toml`
 - If required settings are missing, Settings UI opens automatically for first-run setup.
 
 ## Useful Commands
 
 ```powershell
 # List available ElevenLabs voices (name + voice_id)
-py -m screen_reader voices --config config.toml
+py -m snap_narrate voices --config config.toml
 
 # One-shot screenshot extraction preview (prints extracted text)
-py -m screen_reader test-capture --config config.toml
+py -m snap_narrate test-capture --config config.toml
 
 # Open settings window
-py -m screen_reader ui --config config.toml
+py -m snap_narrate ui --config config.toml
 
 # Install desktop shortcut
-py -m screen_reader install-shortcut --config config.toml
+py -m snap_narrate install-shortcut --config config.toml
 
 # Startup control
-py -m screen_reader startup --status --config config.toml
-py -m screen_reader startup --enable --config config.toml
-py -m screen_reader startup --disable --config config.toml
+py -m snap_narrate startup --status --config config.toml
+py -m snap_narrate startup --enable --config config.toml
+py -m snap_narrate startup --disable --config config.toml
 
 # Usage and remaining credits
-py -m screen_reader usage --config config.toml
-py -m screen_reader usage --config config.toml --json
+py -m snap_narrate usage --config config.toml
+py -m snap_narrate usage --config config.toml --json
 ```
 
 Shortcuts created by these commands launch with no arguments and rely on the EXE auto-run path.
@@ -122,13 +122,13 @@ Shortcuts created by these commands launch with no arguments and rely on the EXE
 ## Build EXE
 
 ```powershell
-cd C:\Users\brend\OneDrive\Documents\Projects\screen-reader
+cd C:\Users\brend\OneDrive\Documents\Projects\snapnarrate
 .\scripts\build.ps1 -InstallDeps
 ```
 
 Output:
-- `dist\screen-reader.exe`
-- Uses icon asset: `assets\screen-reader.ico`
+- `dist\snapnarrate.exe`
+- Uses icon asset: `assets\snapnarrate.ico`
 
 ## Hotkey Troubleshooting
 
@@ -136,7 +136,7 @@ Output:
 - Use tray menu:
   - `Show Hotkeys` to verify registration status
   - `Capture Now` to test pipeline without keyboard hook
-- Check logs at `logs/screen-reader.log`.
+- Check logs at `logs/snapnarrate.log`.
 
 ## Config Reference
 
@@ -167,3 +167,4 @@ Output:
 
 - [CAPABILITIES.md](CAPABILITIES.md)
 - [CHANGELOG.md](CHANGELOG.md)
+

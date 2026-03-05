@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from pathlib import Path
 
@@ -10,7 +10,7 @@ def project_root() -> Path:
 
 
 def icon_asset_path() -> Path:
-    return project_root() / "assets" / "screen-reader.ico"
+    return project_root() / "assets" / "snapnarrate.ico"
 
 
 def load_tray_icon() -> Image.Image:
@@ -29,4 +29,5 @@ def generated_fallback_icon() -> Image.Image:
     draw.rectangle((16, 16, 48, 48), fill=(220, 220, 220))
     draw.rectangle((22, 22, 42, 42), fill=(70, 120, 180))
     return image
+
 

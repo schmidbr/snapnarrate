@@ -1,8 +1,8 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 
-from screen_reader.openai_client import OllamaVisionExtractor
+from snap_narrate.openai_client import OllamaVisionExtractor
 
 
 class FakeOllamaExtractor(OllamaVisionExtractor):
@@ -70,3 +70,4 @@ def test_ollama_finalize_fallback_joins_paragraphs_when_pass2_empty() -> None:
     result = extractor.extract_narrative_text(b"img", "default")
     assert "Para A" in result.text
     assert "Para B" in result.text
+

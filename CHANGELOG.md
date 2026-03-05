@@ -6,6 +6,12 @@ All notable changes to this project are documented in this file.
 
 ### Added
 
+- No changes yet.
+
+## [0.3.0] - 2026-03-05
+
+### Added
+
 - Configurable vision provider selection (`openai` or `ollama`) via config and settings UI.
 - Ollama vision extractor implementation with shared extraction JSON contract.
 - Ollama two-pass paragraph coverage extraction with low-coverage retry and merged final output.

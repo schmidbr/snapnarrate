@@ -15,11 +15,30 @@ $IconPath = Join-Path $ProjectRoot "assets\screen-reader.ico"
 $Entry = Join-Path $ProjectRoot "src\screen_reader\__main__.py"
 $DistPath = Join-Path $ProjectRoot "dist"
 $BuildPath = Join-Path $env:TEMP "screen-reader-pyinstaller-build"
+$ExePath = Join-Path $DistPath "screen-reader.exe"
 
 if (Test-Path $BuildPath) {
   Remove-Item -Recurse -Force $BuildPath -ErrorAction SilentlyContinue
 }
 New-Item -ItemType Directory -Force -Path $BuildPath | Out-Null
+New-Item -ItemType Directory -Force -Path $DistPath | Out-Null
+
+# Stop any running screen-reader process to avoid file lock on dist\screen-reader.exe
+Get-Process | Where-Object { $_.ProcessName -eq "screen-reader" } | ForEach-Object {
+  try { Stop-Process -Id $_.Id -Force -ErrorAction Stop } catch {}
+}
+
+# Best-effort cleanup of previous executable with short retry window.
+if (Test-Path $ExePath) {
+  for ($i = 0; $i -lt 5; $i++) {
+    try {
+      Remove-Item -Force $ExePath -ErrorAction Stop
+      break
+    } catch {
+      Start-Sleep -Milliseconds 400
+    }
+  }
+}
 
 py -m PyInstaller `
   --noconfirm `

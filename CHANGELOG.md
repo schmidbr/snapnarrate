@@ -4,7 +4,30 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
-- No unreleased entries.
+### Added
+
+- Configurable vision provider selection (`openai` or `ollama`) via config and settings UI.
+- Ollama vision extractor implementation with shared extraction JSON contract.
+- Ollama two-pass paragraph coverage extraction with low-coverage retry and merged final output.
+- Extractor factory to route provider selection without changing pipeline interfaces.
+- Provider-aware `doctor` checks for OpenAI and Ollama setup.
+- Windows launchability features:
+  - desktop shortcut command
+  - startup management command
+  - tray startup toggle
+  - settings UI startup checkbox
+  - startup-folder based autorun support
+  - tray icon asset (`assets/screen-reader.ico`)
+  - EXE build script (`scripts/build.ps1`)
+  - no-argument EXE auto-run with config auto-discovery and first-run setup UI
+  - startup state controls in tray and settings UI (`app.run_at_startup`)
+
+### Changed
+
+- OpenAI extractor now supports configurable `openai.base_url`.
+- Config schema expanded with `vision`, `ollama`, OpenAI base URL, startup behavior, and Ollama coverage knobs.
+- README/CAPABILITIES updated with provider setup instructions.
+- Build script now uses temp workpath and fails fast on PyInstaller errors.
 
 ## [0.2.0] - 2026-03-05
 
@@ -49,4 +72,3 @@ All notable changes to this project are documented in this file.
 - Initial project scaffold.
 - Basic text-to-speech CLI using local `pyttsx3`.
 - Starter files: README, requirements, sample text, git setup.
-

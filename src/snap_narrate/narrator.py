@@ -219,18 +219,22 @@ class Narrator:
         if session.cancelled:
             return NarrationResult("cancelled", "Cancelled", len(text), text)
 
+        self._publish_plan(session, chunks, final=more is None)
         self.player.play(audio, session.id, chunks[0])
         timings = Timings(extract_ms, tts_ms, self._ms_since(start))
 
-        rest = chunks[1:]
-        if rest or more is not None:
-            self._spawn(lambda: self._continue(session, rest, more))
+        if len(chunks) > 1 or more is not None:
+            self._spawn(lambda: self._continue(session, chunks, more))
         return NarrationResult("played", "Narration started", len(text), text, timings)
 
-    def _continue(self, session: Session, chunks: list[str], more: Callable[[], list[str]] | None) -> None:
+    def _continue(self, session: Session, planned: list[str], more: Callable[[], list[str]] | None) -> None:
+        """Speak planned[1:] (planned[0] is already playing), plus whatever `more` adds."""
+        chunks = planned[1:]
         try:
             if more is not None and not session.cancelled:
-                chunks = chunks + more()
+                extra = more()
+                chunks = chunks + extra
+                self._publish_plan(session, planned + extra, final=True)
             for index, chunk in enumerate(chunks):
                 if session.cancelled:
                     logger.info("event=continuation_cancelled session=%s remaining=%s", session.id, len(chunks) - index)
@@ -278,6 +282,10 @@ class Narrator:
         first = head_chunk(text, self.settings.initial_chunk_chars)
         rest = remaining_after(text, first) if first else text
         return [first, *followup_chunks(rest, self.settings.followup_chunk_chars, 1)] if first else []
+
+    def _publish_plan(self, session: Session, chunks: list[str], final: bool) -> None:
+        if self.bus is not None:
+            self.bus.publish(events.NARRATION_PLAN, session=session.id, chunk_chars=[len(c) for c in chunks], final=final)
 
     def _publish_text(self, session: Session, text: str, final: bool) -> None:
         if self.bus is not None:

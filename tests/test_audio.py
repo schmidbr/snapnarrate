@@ -59,3 +59,19 @@ def test_stop_interrupts_current_chunk(output: RecordingOutput) -> None:
         assert not player.is_playing
     finally:
         player.close()
+
+
+def test_progress_reports_index_and_position(output: RecordingOutput) -> None:
+    reports: list[tuple[int, int, float, float]] = []
+    idle = threading.Event()
+    player = AudioPlayer("pcm_16000", output=output, on_progress=lambda *a: reports.append(a), on_idle=idle.set)
+    try:
+        player.play(AUDIO, session=7)
+        assert player.queue(AUDIO, session=7)
+        assert idle.wait(2)
+        duration = len(AUDIO) // 2 / 16000
+        finals = [r for r in reports if r[2] == pytest.approx(duration)]
+        assert [r[1] for r in finals] == [0, 1]  # both chunks reached 100%, in order
+        assert all(r[0] == 7 for r in reports)
+    finally:
+        player.close()

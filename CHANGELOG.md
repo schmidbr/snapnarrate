@@ -34,7 +34,10 @@ and a proper Windows packaging setup. Existing `config.toml` files keep working.
 
 ### Added
 
-- **Subtitle overlay** (`[hud]`): a click-through caption of the line being spoken.
+- **Ollama Cloud vision provider** (`ollama-cloud`): metered pay-as-you-go models hosted by Ollama, such as `gemma4:31b`. They use no local GPU, so they don't compete with the game. Set it up with an API key in Settings; `doctor` checks the key and model.
+- Ollama requests turn the model's thinking mode off, which lowers latency and, on the cloud, avoids paying for thinking tokens. Token counts are logged per request.
+- **Subtitle overlay** (`[hud]`): a click-through caption of the line being spoken, with a **segmented progress bar**. Each segment is one spoken chunk: played segments are full, the current one fills from the real playback position, and upcoming ones are sized from the voice's measured speaking rate. A dim tail marks the part of the passage still being read. It can be turned off with `hud.progress_bar`.
+- New events `narration.plan` and `speech.progress`, and `speech.chunk` now includes `index` and `duration`, so API clients such as a future Game Bar widget can draw the same bar.
 - **Local control API** (`[api]`): token-protected HTTP API on `127.0.0.1` plus a Server-Sent Events stream, for widgets such as a future Xbox Game Bar widget, overlays, and scripts.
 - **Addon system:** Python addons through the `snapnarrate.addons` entry point, and a registry for adding vision or speech providers. See `docs/ADDONS.md`.
 - Any setting can be overridden with `SNAPNARRATE_<SECTION>_<KEY>` environment variables.

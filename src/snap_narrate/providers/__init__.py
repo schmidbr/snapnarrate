@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Callable
 
-from snap_narrate.config import AppConfig
+from snap_narrate.config import OLLAMA_CLOUD_URL, AppConfig
 from snap_narrate.providers.base import ExtractResult, SpeechProvider, VisionProvider
 
 VisionFactory = Callable[[AppConfig], VisionProvider]
@@ -80,6 +80,26 @@ def _ollama(cfg: AppConfig) -> VisionProvider:
     )
 
 
+def _ollama_cloud(cfg: AppConfig) -> VisionProvider:
+    from snap_narrate.providers.ollama import OllamaVision
+
+    return OllamaVision(
+        base_url=OLLAMA_CLOUD_URL,
+        model=cfg.ollama_cloud.model,
+        api_key=cfg.ollama_cloud.api_key,
+        ignore_short_lines=cfg.filter.ignore_short_lines,
+        timeout_sec=cfg.vision.timeout_sec,
+        num_predict=cfg.ollama.num_predict,
+        temperature=cfg.ollama.temperature,
+        top_p=cfg.ollama.top_p,
+        min_paragraphs=cfg.ollama.min_paragraphs,
+        coverage_retry_attempts=cfg.ollama.coverage_retry_attempts,
+        fast_mode=cfg.vision.fast_mode,
+        ultra_fast_mode=cfg.vision.ultra_fast_mode,
+        ultra_fast_model=cfg.ollama_cloud.ultra_fast_model,
+    )
+
+
 def _elevenlabs(cfg: AppConfig) -> SpeechProvider:
     from snap_narrate.providers.elevenlabs import ElevenLabsSpeech
 
@@ -94,6 +114,7 @@ def _elevenlabs(cfg: AppConfig) -> SpeechProvider:
 
 register_vision("openai", _openai)
 register_vision("ollama", _ollama)
+register_vision("ollama-cloud", _ollama_cloud)
 register_speech("elevenlabs", _elevenlabs)
 
 __all__ = [

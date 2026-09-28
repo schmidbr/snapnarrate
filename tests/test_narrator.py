@@ -109,3 +109,34 @@ def test_new_capture_drops_previous_tail(player: AudioPlayer) -> None:
     deferred[0]()  # capture A's tail wakes up late
     assert len(speech.calls) == calls_before
     assert player.session == 2
+
+
+def test_plan_is_published_then_extended_for_speech_first(player: AudioPlayer) -> None:
+    from snap_narrate import events
+    from snap_narrate.events import EventBus
+
+    bus = EventBus()
+    plans: list[dict] = []
+    bus.subscribe(events.NARRATION_PLAN, lambda e: plans.append(e.data))
+    vision = FakeVision(
+        full=ExtractResult("Short complete paragraph.\nSecond paragraph follows with more story to narrate next."),
+        first=ExtractResult("Short complete paragraph.", more_text_likely=True),
+    )
+    narrator = make(vision, FakeSpeech(), player, min_block_chars=10, speech_first_enabled=True, followup_min_chars=20)
+    narrator.bus = bus
+    narrator.narrate(b"img", Session(4))
+    assert plans[0] == {"session": 4, "chunk_chars": [25], "final": False}
+    assert plans[1]["final"] is True and len(plans[1]["chunk_chars"]) == 2
+
+
+def test_plan_is_final_immediately_on_full_path(player: AudioPlayer) -> None:
+    from snap_narrate import events
+    from snap_narrate.events import EventBus
+
+    bus = EventBus()
+    plans: list[dict] = []
+    bus.subscribe(events.NARRATION_PLAN, lambda e: plans.append(e.data))
+    narrator = make(FakeVision(ExtractResult(LONG)), FakeSpeech(), player, initial_chunk_chars=120, followup_chunk_chars=200)
+    narrator.bus = bus
+    narrator.narrate(b"img", Session(1))
+    assert len(plans) == 1 and plans[0]["final"] is True and len(plans[0]["chunk_chars"]) > 1

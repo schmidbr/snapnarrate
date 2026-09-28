@@ -68,6 +68,7 @@ class Engine:
         self.player = player or AudioPlayer(
             cfg.elevenlabs.output_format,
             on_chunk_start=self._on_chunk_start,
+            on_progress=self._on_progress,
             on_idle=self._on_audio_idle,
         )
         self.configure(cfg)
@@ -305,9 +306,14 @@ class Engine:
         if job.future is not None and not job.future.done():
             job.future.set_result(result)
 
-    def _on_chunk_start(self, session_id: int, text: str) -> None:
+    def _on_chunk_start(self, session_id: int, index: int, text: str, duration: float) -> None:
         self._set_state("speaking")
-        self.bus.publish(events.SPEECH_CHUNK, session=session_id, text=text)
+        self.bus.publish(events.SPEECH_CHUNK, session=session_id, index=index, text=text, duration=round(duration, 3))
+
+    def _on_progress(self, session_id: int, index: int, position: float, duration: float) -> None:
+        self.bus.publish(
+            events.SPEECH_PROGRESS, session=session_id, index=index, position=round(position, 3), duration=round(duration, 3)
+        )
 
     def _on_audio_idle(self) -> None:
         if self._state == "speaking":

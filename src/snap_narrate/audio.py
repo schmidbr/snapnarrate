@@ -11,6 +11,7 @@ from __future__ import annotations
 import io
 import logging
 import threading
+import time
 from collections import deque
 from dataclasses import dataclass
 from typing import Callable
@@ -20,9 +21,13 @@ import numpy as np
 logger = logging.getLogger("snap_narrate")
 
 BLOCK_FRAMES = 2048  # ~46 ms at 44.1 kHz: how quickly Stop takes effect.
+PROGRESS_INTERVAL_SEC = 0.1
 
-# (samples, samplerate, keep_going) -> None. Plays until done or keep_going() is False.
-OutputFn = Callable[[np.ndarray, int, Callable[[], bool]], None]
+# tick(frames_heard) -> keep_going. Output calls it before each block (and once at the end)
+# with how many frames have actually reached the speakers so far.
+Tick = Callable[[int], bool]
+# (samples, samplerate, tick) -> None. Plays until done or tick() returns False.
+OutputFn = Callable[[np.ndarray, int, Tick], None]
 
 
 def decode_audio(data: bytes, output_format: str) -> tuple[np.ndarray, int]:
@@ -53,41 +58,55 @@ def decode_audio(data: bytes, output_format: str) -> tuple[np.ndarray, int]:
     return samples, int(rate)
 
 
-def sounddevice_output(samples: np.ndarray, rate: int, keep_going: Callable[[], bool]) -> None:
+def sounddevice_output(samples: np.ndarray, rate: int, tick: Tick) -> None:
     import sounddevice as sd
 
     channels = 1 if samples.ndim == 1 else samples.shape[1]
     with sd.OutputStream(samplerate=rate, channels=channels, dtype="float32") as stream:
+        # Frames written are ahead of what is audible by the device's output latency.
+        latency_frames = int(float(stream.latency) * rate)
         for start in range(0, len(samples), BLOCK_FRAMES):
-            if not keep_going():
+            if not tick(max(0, start - latency_frames)):
                 stream.abort()
                 return
             stream.write(np.ascontiguousarray(samples[start : start + BLOCK_FRAMES], dtype=np.float32))
+    tick(len(samples))  # the context exit waits for the buffer to drain: all of it was heard
 
 
 @dataclass
 class _Chunk:
     session: int
+    index: int  # position within its session: 0 for the chunk passed to play(), then 1, 2, ...
     samples: np.ndarray
     rate: int
     text: str
+
+    @property
+    def duration(self) -> float:
+        return len(self.samples) / float(self.rate)
 
 
 class AudioPlayer:
     def __init__(
         self,
         output_format: str,
-        on_chunk_start: Callable[[int, str], None] | None = None,
+        on_chunk_start: Callable[[int, int, str, float], None] | None = None,
         on_idle: Callable[[], None] | None = None,
         output: OutputFn | None = None,
+        on_progress: Callable[[int, int, float, float], None] | None = None,
     ) -> None:
+        """Callbacks run on the audio thread and must be quick:
+        on_chunk_start(session, index, text, duration_sec), on_progress(session, index,
+        position_sec, duration_sec) about every 100 ms, on_idle() when the queue drains."""
         self.output_format = output_format
         self.on_chunk_start = on_chunk_start
+        self.on_progress = on_progress
         self.on_idle = on_idle
         self._output = output or sounddevice_output
         self._cond = threading.Condition()
         self._queue: deque[_Chunk] = deque()
         self._session = 0  # 0 = nothing active
+        self._next_index = 0
         self._busy = False
         self._closed = False
         self._thread = threading.Thread(target=self._run, name="snapnarrate-audio", daemon=True)
@@ -108,7 +127,8 @@ class AudioPlayer:
         with self._cond:
             self._session = session
             self._queue.clear()
-            self._queue.append(_Chunk(session, samples, rate, text))
+            self._queue.append(_Chunk(session, 0, samples, rate, text))
+            self._next_index = 1
             self._cond.notify_all()
 
     def queue(self, audio: bytes, session: int, text: str = "") -> bool:
@@ -119,7 +139,8 @@ class AudioPlayer:
         with self._cond:
             if session != self._session:
                 return False
-            self._queue.append(_Chunk(session, samples, rate, text))
+            self._queue.append(_Chunk(session, self._next_index, samples, rate, text))
+            self._next_index += 1
             self._cond.notify_all()
             return True
 
@@ -154,11 +175,11 @@ class AudioPlayer:
 
             if self.on_chunk_start:
                 try:
-                    self.on_chunk_start(chunk.session, chunk.text)
+                    self.on_chunk_start(chunk.session, chunk.index, chunk.text, chunk.duration)
                 except Exception:  # noqa: BLE001
                     logger.exception("event=audio_chunk_callback_failed")
             try:
-                self._output(chunk.samples, chunk.rate, lambda: chunk.session == self._session and not self._closed)
+                self._output(chunk.samples, chunk.rate, self._make_tick(chunk))
             except Exception as exc:  # noqa: BLE001
                 logger.warning("event=audio_playback_failed error=%s", exc)
 
@@ -172,3 +193,21 @@ class AudioPlayer:
                     self.on_idle()
                 except Exception:  # noqa: BLE001
                     logger.exception("event=audio_idle_callback_failed")
+
+    def _make_tick(self, chunk: _Chunk) -> Tick:
+        last_report = [float("-inf")]
+        total = len(chunk.samples)
+
+        def tick(frames_heard: int) -> bool:
+            alive = chunk.session == self._session and not self._closed
+            if alive and self.on_progress is not None:
+                now = time.monotonic()
+                if now - last_report[0] >= PROGRESS_INTERVAL_SEC or frames_heard >= total:
+                    last_report[0] = now
+                    try:
+                        self.on_progress(chunk.session, chunk.index, min(frames_heard, total) / chunk.rate, chunk.duration)
+                    except Exception:  # noqa: BLE001
+                        logger.exception("event=audio_progress_callback_failed")
+            return alive
+
+        return tick

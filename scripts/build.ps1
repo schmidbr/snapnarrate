@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   Build SnapNarrate: tests, PyInstaller app folder, and (if Inno Setup 6 is installed) the installer.
 
@@ -6,16 +6,18 @@
   Uses an isolated .venv-build with pinned versions from packaging/requirements-build.txt,
   so a build depends only on the commit, not on whatever is in your global Python.
 
-  Output:
-    dist\SnapNarrate\SnapNarrate.exe            tray app (windowed)
-    dist\SnapNarrate\snapnarrate-cli.exe        command line (doctor, voices, usage, ...)
-    dist\installer\SnapNarrate-Setup-X.Y.Z.exe  installer (needs Inno Setup 6: https://jrsoftware.org/isinfo.php)
+  Output (in -OutDir; defaults to .\dist, or %LOCALAPPDATA%\SnapNarrate-build when the
+  project lives in OneDrive, whose sync locks build folders and would upload ~80 MB per build):
+    SnapNarrate\SnapNarrate.exe            tray app (windowed)
+    SnapNarrate\snapnarrate-cli.exe        command line (doctor, voices, usage, ...)
+    installer\SnapNarrate-Setup-X.Y.Z.exe  installer (needs Inno Setup 6: https://jrsoftware.org/isinfo.php)
 
 .EXAMPLE
   .\scripts\build.ps1
   .\scripts\build.ps1 -SkipTests -SkipInstaller
 #>
 param(
+  [string]$OutDir,
   [switch]$SkipTests,
   [switch]$SkipInstaller,
   [switch]$Clean
@@ -33,6 +35,12 @@ function Invoke-Checked([string]$What, [scriptblock]$Command) {
   try { & $Command } finally { $ErrorActionPreference = $previous }
   if ($LASTEXITCODE -ne 0) { throw "$What failed (exit code $LASTEXITCODE)" }
 }
+
+if (-not $OutDir) {
+  $inOneDrive = $env:OneDrive -and $Root.StartsWith($env:OneDrive, [StringComparison]::OrdinalIgnoreCase)
+  $OutDir = if ($inOneDrive) { Join-Path $env:LOCALAPPDATA "SnapNarrate-build" } else { Join-Path $Root "dist" }
+}
+$OutDir = [IO.Path]::GetFullPath($OutDir)
 
 $Venv = Join-Path $Root ".venv-build"
 if ($Clean -and (Test-Path $Venv)) { Remove-Item -Recurse -Force $Venv }
@@ -53,21 +61,24 @@ if (-not $SkipTests) {
   Invoke-Checked "tests" { & $Py -m pytest -q }
 }
 
-# A running copy locks files in dist\SnapNarrate.
+# A running copy locks files in the output folder.
 Get-Process -Name "SnapNarrate", "snapnarrate-cli" -ErrorAction SilentlyContinue |
-  Where-Object { $_.Path -and $_.Path.StartsWith((Join-Path $Root "dist"), [StringComparison]::OrdinalIgnoreCase) } |
+  Where-Object { $_.Path -and $_.Path.StartsWith($OutDir, [StringComparison]::OrdinalIgnoreCase) } |
   Stop-Process -Force
 
+# Work files go to %TEMP%: inside a OneDrive folder, sync locks them and --clean fails with "Access is denied".
+$WorkPath = Join-Path $env:TEMP "snapnarrate-pyinstaller"
 Invoke-Checked "PyInstaller" {
-  & $Py -m PyInstaller --noconfirm --clean --distpath dist --workpath build\pyinstaller packaging\snapnarrate.spec
+  & $Py -m PyInstaller --noconfirm --clean --distpath $OutDir --workpath $WorkPath packaging\snapnarrate.spec
 }
 
-$Cli = Join-Path $Root "dist\SnapNarrate\snapnarrate-cli.exe"
+$AppDir = Join-Path $OutDir "SnapNarrate"
+$Cli = Join-Path $AppDir "snapnarrate-cli.exe"
 $Reported = (& $Cli --version).Trim()
 if ($LASTEXITCODE -ne 0 -or $Reported -ne "SnapNarrate $Version") {
   throw "Smoke check failed: '$Cli --version' printed '$Reported'"
 }
-Write-Host "App folder: dist\SnapNarrate ($Reported)"
+Write-Host "App folder: $AppDir ($Reported)"
 
 if ($SkipInstaller) { return }
 
@@ -81,5 +92,8 @@ if (-not $Iscc) {
   Write-Warning "Inno Setup 6 not found; skipped the installer. Install it (winget install JRSoftware.InnoSetup) and re-run."
   return
 }
-Invoke-Checked "Inno Setup" { & $Iscc /Q "/DAppVersion=$Version" packaging\installer.iss }
-Write-Host "Installer: dist\installer\SnapNarrate-Setup-$Version.exe"
+$InstallerDir = Join-Path $OutDir "installer"
+Invoke-Checked "Inno Setup" {
+  & $Iscc /Q "/DAppVersion=$Version" "/DSourceDir=$AppDir" "/DOutputDir=$InstallerDir" packaging\installer.iss
+}
+Write-Host "Installer: $InstallerDir\SnapNarrate-Setup-$Version.exe"

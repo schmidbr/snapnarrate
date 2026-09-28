@@ -5,6 +5,12 @@
 #ifndef AppVersion
   #define AppVersion "0.0.0"
 #endif
+#ifndef SourceDir
+  #define SourceDir "..\dist\SnapNarrate"
+#endif
+#ifndef OutputDir
+  #define OutputDir "..\dist\installer"
+#endif
 
 [Setup]
 AppId={{8C1B7C35-5E0B-4F6E-9D57-3F4C2D9A1E21}
@@ -18,7 +24,7 @@ DisableDirPage=auto
 PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
-OutputDir=..\dist\installer
+OutputDir={#OutputDir}
 OutputBaseFilename=SnapNarrate-Setup-{#AppVersion}
 SetupIconFile=..\assets\snapnarrate.ico
 UninstallDisplayIcon={app}\SnapNarrate.exe
@@ -35,7 +41,7 @@ Name: "startup"; Description: "Start SnapNarrate when I sign in"
 Name: "desktopicon"; Description: "Create a desktop shortcut"; Flags: unchecked
 
 [Files]
-Source: "..\dist\SnapNarrate\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
+Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
 
 [InstallDelete]
 ; Remove files from the previous version's _internal folder before copying the new one.

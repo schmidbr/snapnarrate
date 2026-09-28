@@ -1,4 +1,4 @@
-"""Local Ollama vision provider.
+"""Ollama vision provider: a local Ollama server, or metered Ollama Cloud (https://ollama.com).
 
 Smaller local models tend to stop after one paragraph, so full extraction is two passes:
 collect paragraphs as structured JSON (retrying once in strict mode if coverage is low),
@@ -69,9 +69,11 @@ class OllamaVision:
         fast_mode: bool = True,
         ultra_fast_mode: bool = True,
         ultra_fast_model: str = "",
+        api_key: str = "",
         session: Any = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
+        self.api_key = api_key.strip()  # only needed for Ollama Cloud
         self.model = model
         self.ignore_short_lines = ignore_short_lines
         self.timeout_sec = timeout_sec
@@ -127,7 +129,7 @@ class OllamaVision:
         return result
 
     def list_models(self) -> list[str]:
-        response = self._session.get(f"{self.base_url}/api/tags", timeout=5)
+        response = self._session.get(f"{self.base_url}/api/tags", headers=self._headers(), timeout=10)
         response.raise_for_status()
         return [str(m.get("name", "")) for m in response.json().get("models", [])]
 
@@ -151,6 +153,14 @@ class OllamaVision:
             return ExtractResult(text=raw.strip(), confidence=0.35, dropped_reason="non_json_fallback")
         return result
 
+    def _headers(self) -> dict[str, str]:
+        return {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
+
+    def _post_generate(self, payload: dict[str, Any]) -> Any:
+        return self._session.post(
+            f"{self.base_url}/api/generate", json=payload, headers=self._headers(), timeout=self.timeout_sec
+        )
+
     def _generate(self, prompt: str, schema: dict[str, Any], model: str, image_b64: str | None = None) -> str:
         payload: dict[str, Any] = {
             "model": model,
@@ -159,13 +169,27 @@ class OllamaVision:
             "format": schema,
             "keep_alive": self.keep_alive,
             "options": self.options,
+            # Reading text needs no reasoning; thinking only adds latency (and billed tokens on cloud).
+            "think": False,
         }
         if image_b64 is not None:
             payload["images"] = [image_b64]
-        response = self._session.post(f"{self.base_url}/api/generate", json=payload, timeout=self.timeout_sec)
+        response = self._post_generate(payload)
+        if response.status_code >= 400 and "think" in response.text.lower():
+            # Some models reject the think option outright; retry without it.
+            payload.pop("think")
+            response = self._post_generate(payload)
+        if response.status_code in (401, 403):
+            raise ValueError("Ollama Cloud rejected the API key. Check it in Settings.")
         if response.status_code >= 400:
             raise RuntimeError(f"Ollama extraction failed ({response.status_code}): {response.text[:200]}")
         data = response.json()
+        logger.info(
+            "event=ollama_usage model=%s prompt_tokens=%s output_tokens=%s",
+            model,
+            data.get("prompt_eval_count"),
+            data.get("eval_count"),
+        )
         if isinstance(data.get("response"), str):
             return data["response"]
         message = data.get("message")

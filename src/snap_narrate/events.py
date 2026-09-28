@@ -19,8 +19,12 @@ NOTICE = "notice"  # {"message": str, "level": "info|warning|error"}
 CAPTURE = "capture"  # {"source": "fullscreen|region|api|self_test", "bytes": int, "capture_ms": int}
 NARRATION_STARTED = "narration.started"  # {"session": int}
 NARRATION_TEXT = "narration.text"  # {"session": int, "text": str, "final": bool} full text known so far
+# The chunks this narration will be spoken in, as character counts, in playback order.
+# final=False means more chunks may be appended (the rest of the passage is still being read).
+NARRATION_PLAN = "narration.plan"  # {"session": int, "chunk_chars": [int], "final": bool}
 NARRATION_FINISHED = "narration.finished"  # {"session": int, "status": str, "message": str, "chars": int, "timings": {...}}
-SPEECH_CHUNK = "speech.chunk"  # {"session": int, "text": str} a chunk just started playing
+SPEECH_CHUNK = "speech.chunk"  # {"session": int, "index": int, "text": str, "duration": float} a chunk started playing
+SPEECH_PROGRESS = "speech.progress"  # {"session": int, "index": int, "position": float, "duration": float} ~10x/second
 SPEECH_IDLE = "speech.idle"  # {} playback queue drained or stopped
 
 ALL = "*"

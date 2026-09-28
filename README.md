@@ -1,7 +1,7 @@
 # SnapNarrate
 
 SnapNarrate reads on-screen game text aloud. Press a hotkey and it captures the screen,
-uses an AI vision model (OpenAI, or a local Ollama model) to pull out the story text
+uses an AI vision model (Ollama Cloud, OpenAI, or a local Ollama model) to pull out the story text
 (dialogue, lore, journals, quest text) while ignoring HUD and menu clutter, then speaks it
 with a high-fidelity ElevenLabs voice. Keep playing instead of stopping to read.
 
@@ -11,7 +11,7 @@ with a high-fidelity ElevenLabs voice. Keep playing instead of stopping to read.
 - **Fast start:** a quick first pass starts speaking the first sentence while the full text is still being read. The rest is queued seamlessly.
 - **High-fidelity voices:** use any ElevenLabs voice. Voices can be browsed and previewed from Settings. You can optionally use a faster model for just the first sentence.
 - **Smart filtering:** skips HUD, menus, and short labels, and doesn't re-read text it just read.
-- **Subtitle overlay (optional):** shows the line being spoken over your game.
+- **Subtitle overlay (optional):** shows the line being spoken over your game, with a segmented progress bar for the whole passage.
 - **Local control API (optional):** lets widgets, overlays, Stream Deck buttons, or scripts trigger captures and receive live events. See [docs/ADDONS.md](docs/ADDONS.md).
 - **Tray menu:** capture, stop, pause, capture mode, settings, run at sign-in, test voice, self-test, usage and credits, and logs.
 
@@ -21,7 +21,12 @@ Download `SnapNarrate-Setup-x.y.z.exe` from the releases page and run it. It ins
 your user account, so no admin prompt appears. On first launch the Settings window opens. Add:
 
 1. **ElevenLabs API key**. Then click **Load voices**, pick a voice, and click **Preview voice**.
-2. **OpenAI API key**, or switch the provider to `ollama` and set a local vision model such as `llava`.
+2. **A vision provider** on the Vision tab:
+   - `ollama-cloud` (recommended for gaming): pay-as-you-go at [ollama.com](https://ollama.com/pricing).
+     Create a key under Settings → Keys and paste it in. It runs on Ollama's servers, so it doesn't
+     compete with your game for the GPU. It costs a fraction of a cent per capture with `gemma4:31b`.
+   - `openai`: an OpenAI API key.
+   - `ollama`: a model on your own PC. It's free, but uses 5–8 GB of graphics memory while you play.
 
 Settings are stored in `%APPDATA%\SnapNarrate\config.toml`.
 
@@ -66,10 +71,14 @@ The code layout and design are described in [docs/ARCHITECTURE.md](docs/ARCHITEC
 ```
 
 The script creates an isolated `.venv-build` with the pinned versions in
-`packaging/requirements-build.txt`, runs the tests, and builds `dist\SnapNarrate\` with PyInstaller.
-That folder holds `SnapNarrate.exe` and `snapnarrate-cli.exe`. If
+`packaging/requirements-build.txt`, runs the tests, and builds a `SnapNarrate\` folder with
+PyInstaller. That folder holds `SnapNarrate.exe` and `snapnarrate-cli.exe`. If
 [Inno Setup 6](https://jrsoftware.org/isinfo.php) is installed (`winget install JRSoftware.InnoSetup`),
-it also builds `dist\installer\SnapNarrate-Setup-x.y.z.exe`. To bump the version, edit
+it also builds `installer\SnapNarrate-Setup-x.y.z.exe`.
+
+Output goes to `.\dist`. If the project folder is inside OneDrive, it goes to
+`%LOCALAPPDATA%\SnapNarrate-build` instead, because OneDrive locks build folders and would upload
+about 80 MB per build. Use `-OutDir` to choose another location. To bump the version, edit
 `src/snap_narrate/__init__.py`.
 
 For distribution to other people, sign both exes and the installer (for example with Azure
@@ -77,7 +86,7 @@ Trusted Signing) to avoid SmartScreen warnings.
 
 ## Privacy
 
-Screenshots are sent to the vision provider you choose: OpenAI, or your own local Ollama
-server. The extracted text is sent to ElevenLabs. Nothing is sent until you press a capture
+Screenshots are sent to the vision provider you choose: Ollama Cloud, OpenAI, or your own local
+Ollama server. The extracted text is sent to ElevenLabs. Nothing is sent until you press a capture
 hotkey. The local API is off by default. When enabled, it listens only on `127.0.0.1` and
 requires a token.

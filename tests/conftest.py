@@ -52,11 +52,15 @@ class RecordingOutput:
         self.played: list[int] = []
         self.gate: threading.Event | None = None  # when set, playback blocks until released
 
-    def __call__(self, samples: np.ndarray, rate: int, keep_going: Callable[[], bool]) -> None:
+    def __call__(self, samples: np.ndarray, rate: int, tick: Callable[[int], bool]) -> None:
         self.played.append(len(samples))
+        if not tick(0):
+            return
         if self.gate is not None:
-            while keep_going() and not self.gate.wait(0.01):
+            while tick(0) and not self.gate.wait(0.01):
                 pass
+            return
+        tick(len(samples))
 
 
 @pytest.fixture
@@ -67,7 +71,7 @@ def output() -> RecordingOutput:
 @pytest.fixture
 def player(output: RecordingOutput):
     started: list[tuple[int, str]] = []
-    p = AudioPlayer("pcm_16000", on_chunk_start=lambda s, t: started.append((s, t)), output=output)
+    p = AudioPlayer("pcm_16000", on_chunk_start=lambda s, i, t, d: started.append((s, t)), output=output)
     p.started = started  # type: ignore[attr-defined]
     yield p
     p.close()

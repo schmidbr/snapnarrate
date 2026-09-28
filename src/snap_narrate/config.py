@@ -37,7 +37,8 @@ SUPPORTED_OUTPUT_FORMATS = [
     "pcm_44100",
 ]
 
-VISION_PROVIDERS = ["openai", "ollama"]
+VISION_PROVIDERS = ["openai", "ollama", "ollama-cloud"]
+OLLAMA_CLOUD_URL = "https://ollama.com"
 CAPTURE_MODES = ["fullscreen", "region"]
 
 
@@ -69,6 +70,15 @@ class OllamaConfig:
     top_p: float = 0.9
     min_paragraphs: int = 2
     coverage_retry_attempts: int = 1
+
+
+@dataclass
+class OllamaCloudConfig:
+    # Metered Ollama Cloud (https://ollama.com): runs on Ollama's servers, so no local GPU use.
+    # Tuning (num_predict, temperature, ...) is shared with [ollama].
+    api_key: str = ""
+    model: str = "gemma4:31b"
+    ultra_fast_model: str = ""
 
 
 @dataclass
@@ -123,6 +133,7 @@ class HudConfig:
     font_size: int = 22
     opacity: float = 0.85
     linger_ms: int = 1500
+    progress_bar: bool = True
 
 
 @dataclass
@@ -155,6 +166,7 @@ class AppConfig:
     vision: VisionConfig = field(default_factory=VisionConfig)
     openai: OpenAIConfig = field(default_factory=OpenAIConfig)
     ollama: OllamaConfig = field(default_factory=OllamaConfig)
+    ollama_cloud: OllamaCloudConfig = field(default_factory=OllamaCloudConfig)
     elevenlabs: ElevenLabsConfig = field(default_factory=ElevenLabsConfig)
     capture: CaptureConfig = field(default_factory=CaptureConfig)
     filter: FilterConfig = field(default_factory=FilterConfig)
@@ -211,6 +223,7 @@ ENV_ALIASES = {
     "ELEVENLABS_MODEL_ID": "elevenlabs.model_id",
     "OLLAMA_BASE_URL": "ollama.base_url",
     "OLLAMA_MODEL": "ollama.model",
+    "OLLAMA_API_KEY": "ollama_cloud.api_key",
     "VISION_PROVIDER": "vision.provider",
 }
 
@@ -410,6 +423,8 @@ def missing_required(cfg: AppConfig) -> list[str]:
         missing.append("OpenAI API key")
     if cfg.vision.provider == "ollama" and not cfg.ollama.model:
         missing.append("Ollama model")
+    if cfg.vision.provider == "ollama-cloud" and not cfg.ollama_cloud.api_key:
+        missing.append("Ollama Cloud API key")
     return missing
 
 

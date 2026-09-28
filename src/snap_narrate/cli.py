@@ -113,6 +113,27 @@ def cmd_doctor(args: argparse.Namespace) -> int:
             check("Ollama model installed", found, wanted)
         except Exception as exc:  # noqa: BLE001
             check("Ollama reachable", False, str(exc))
+    elif cfg.vision.provider == "ollama-cloud":
+        from snap_narrate.config import OLLAMA_CLOUD_URL
+
+        model = cfg.ollama_cloud.model
+        try:
+            hosted = requests.get(f"{OLLAMA_CLOUD_URL}/api/tags", timeout=10).json().get("models", [])
+            check("Ollama Cloud model hosted", model in {m.get("name") for m in hosted}, model)
+        except requests.RequestException as exc:
+            check("Ollama Cloud reachable", False, str(exc))
+        if cfg.ollama_cloud.api_key:
+            try:
+                # One output token: validates the key for a tiny fraction of a cent.
+                response = requests.post(
+                    f"{OLLAMA_CLOUD_URL}/api/generate",
+                    headers={"Authorization": f"Bearer {cfg.ollama_cloud.api_key}"},
+                    json={"model": model, "prompt": "Reply OK.", "stream": False, "think": False, "options": {"num_predict": 1}},
+                    timeout=30,
+                )
+                check("Ollama Cloud key accepted", response.status_code < 400, f"HTTP {response.status_code} {response.text[:120] if response.status_code >= 400 else ''}".strip())
+            except requests.RequestException as exc:
+                check("Ollama Cloud reachable", False, str(exc))
     elif cfg.vision.provider == "openai" and cfg.openai.api_key:
         try:
             response = requests.get(

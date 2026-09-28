@@ -80,3 +80,15 @@ def test_missing_required() -> None:
     assert "OpenAI API key" in missing_required(cfg)
     cfg.openai.api_key, cfg.elevenlabs.api_key, cfg.elevenlabs.voice_id = "a", "b", "c"
     assert missing_required(cfg) == []
+
+
+def test_ollama_cloud_needs_key_and_env_key_is_not_saved(tmp_path: Path) -> None:
+    cfg = AppConfig()
+    cfg.vision.provider = "ollama-cloud"
+    cfg.elevenlabs.api_key = cfg.elevenlabs.voice_id = "x"
+    assert missing_required(cfg) == ["Ollama Cloud API key"]
+
+    path = init_config(tmp_path / "config.toml")
+    loaded = load_config(path, environ={"OLLAMA_API_KEY": "oc-env"})
+    assert loaded.ollama_cloud.api_key == "oc-env"
+    assert tomllib.loads(dumps_config(loaded))["ollama_cloud"]["api_key"] == ""

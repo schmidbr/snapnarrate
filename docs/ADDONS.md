@@ -41,10 +41,16 @@ Each event arrives as `event: <topic>` followed by `data: {"topic", "data", "ts"
 | `capture` | `source`, `bytes`, `capture_ms` |
 | `narration.started` | `session`, `source` |
 | `narration.text` | `session`, `text`, `final`: the text being read. It may arrive twice, once with the first paragraph and again with the full text. |
-| `speech.chunk` | `session`, `text`: this chunk just started playing. Use it for subtitles. |
+| `narration.plan` | `session`, `chunk_chars` (character count per chunk, in playback order), `final`. When `final` is false, more chunks may still be added; the plan is re-sent with the full list once the rest of the passage has been read. |
+| `speech.chunk` | `session`, `index`, `text`, `duration` (seconds): this chunk just started playing. Use it for subtitles. |
+| `speech.progress` | `session`, `index`, `position`, `duration` (seconds), about 10 times a second while audio plays |
 | `speech.idle` | none: playback finished or was stopped |
 | `narration.finished` | `session`, `status` (`played`, `skipped`, `failed`, `cancelled`), `message`, `chars`, `timings` |
 | `notice` | `message`, `level`: the messages the tray shows as notifications |
+
+To draw a progress bar from these events, `snap_narrate.progress.ProgressTracker` holds the
+logic the subtitle overlay uses: one segment per chunk, with upcoming chunks sized from the
+voice's measured speaking rate. It is plain Python with no UI, so it's easy to port.
 
 ### Example: PowerShell
 

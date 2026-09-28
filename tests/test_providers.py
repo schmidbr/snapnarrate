@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import json
 
 import pytest
@@ -29,7 +30,7 @@ class FakeSession:
         self.requests: list[dict] = []
 
     def post(self, url: str, **kwargs) -> Resp:  # noqa: ANN003
-        self.requests.append({"url": url, **kwargs})
+        self.requests.append(copy.deepcopy({"url": url, **kwargs}))  # snapshot: callers may reuse the payload
         return self.responses.pop(0)
 
     get = post
@@ -134,3 +135,45 @@ def test_addons_can_register_vision_providers() -> None:
     cfg.vision.provider = "unit-test-ocr"
     assert "unit-test-ocr" in vision_names()
     assert build_vision(cfg) is marker
+
+
+# ---- Ollama Cloud -----------------------------------------------------------------------
+
+
+def test_ollama_cloud_sends_key_and_disables_thinking() -> None:
+    cfg = AppConfig()
+    cfg.vision.provider = "ollama-cloud"
+    cfg.ollama_cloud.api_key = "oc-key"
+    vision = build_vision(cfg)
+    assert isinstance(vision, OllamaVision)
+    assert vision.base_url == "https://ollama.com" and vision.model == "gemma4:31b"
+
+    session = FakeSession([Resp(_paragraphs("P1", "P2"))])
+    vision._session = session
+    vision.fast_mode = True
+    vision.extract(b"img")
+    request = session.requests[0]
+    assert request["url"] == "https://ollama.com/api/generate"
+    assert request["headers"] == {"Authorization": "Bearer oc-key"}
+    assert request["json"]["think"] is False
+
+
+def test_local_ollama_sends_no_auth_header() -> None:
+    vision, session = _ollama([_paragraphs("P1", "P2")], fast_mode=True)
+    vision.extract(b"img")
+    assert session.requests[0]["headers"] == {}
+
+
+def test_ollama_retries_without_think_when_model_rejects_it() -> None:
+    rejected = Resp({"error": "model does not support thinking"}, status=400)
+    session = FakeSession([rejected, Resp(_paragraphs("P1", "P2"))])
+    vision = OllamaVision("http://ollama", "llava", fast_mode=True, session=session)
+    assert vision.extract(b"img").text == "P1\n\nP2"
+    assert "think" in session.requests[0]["json"] and "think" not in session.requests[1]["json"]
+
+
+def test_ollama_cloud_bad_key_is_a_config_error() -> None:
+    session = FakeSession([Resp({"error": "unauthorized"}, status=401)])
+    vision = OllamaVision("https://ollama.com", "gemma4:31b", api_key="bad", session=session)
+    with pytest.raises(ValueError, match="API key"):
+        vision.extract_first(b"img")

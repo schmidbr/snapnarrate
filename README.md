@@ -13,14 +13,16 @@ with a high-fidelity ElevenLabs voice. Keep playing instead of stopping to read.
 - **Smart filtering:** skips HUD, menus, and short labels, and doesn't re-read text it just read.
 - **Subtitle overlay (optional):** shows the line being spoken over your game, with a segmented progress bar for the whole passage.
 - **Local control API (optional):** lets widgets, overlays, Stream Deck buttons, or scripts trigger captures and receive live events. See [docs/ADDONS.md](docs/ADDONS.md).
-- **Tray menu:** capture, stop, pause, capture mode, settings, run at sign-in, test voice, self-test, usage and credits, and logs.
+- **Narration volume:** set it independently of the Windows volume, so you can turn a quiet game up without the voice getting too loud. Use the slider, the tray's Volume menu, or optional shortcuts.
+- **Modern app window:** a Windows 11 look with light and dark themes, a voice picker that shows names and plays free samples, and a shortcut recorder.
+- **Tray menu:** read screen or region, stop, volume, capture mode, pause, and tools. Double-click the icon to open SnapNarrate.
 
 ## Install
 
 Download `SnapNarrate-Setup-x.y.z.exe` from the releases page and run it. It installs just for
-your user account, so no admin prompt appears. On first launch the Settings window opens. Add:
+your user account, so no admin prompt appears. On first launch the SnapNarrate window opens. Add:
 
-1. **ElevenLabs API key**. Then click **Load voices**, pick a voice, and click **Preview voice**.
+1. **ElevenLabs API key** on the Voice page. Your voices appear by name; select ▶ to hear a free sample, then click a voice to choose it.
 2. **A vision provider** on the Vision tab:
    - `ollama-cloud` (recommended for gaming): pay-as-you-go at [ollama.com](https://ollama.com/pricing).
      Create a key under Settings → Keys and paste it in. It runs on Ollama's servers, so it doesn't

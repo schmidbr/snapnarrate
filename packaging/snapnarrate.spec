@@ -8,7 +8,7 @@
 import re
 from pathlib import Path
 
-from PyInstaller.utils.hooks import collect_submodules
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 from PyInstaller.utils.win32.versioninfo import (
     FixedFileInfo,
     StringFileInfo,
@@ -55,7 +55,8 @@ def analysis(entry):
     return Analysis(  # noqa: F821
         [str(ROOT / "packaging" / entry)],
         pathex=[str(SRC)],
-        datas=[(ICON, "assets")],
+        # CustomTkinter ships its themes and fonts as data files.
+        datas=[(ICON, "assets"), *collect_data_files("customtkinter")],
         # Addons and the pystray backend are imported by name at runtime.
         hiddenimports=collect_submodules("snap_narrate") + ["pystray._win32"],
         excludes=["pytest", "_pytest", "IPython", "matplotlib"],

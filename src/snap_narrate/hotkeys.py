@@ -49,6 +49,56 @@ def parse_hotkey(spec: str) -> tuple[int, int]:
     return mods, key
 
 
+# Canonical spelling for each virtual-key code, used when recording a hotkey from a key press.
+_CANONICAL = {
+    0x20: "space", 0x0D: "enter", 0x09: "tab", 0x1B: "esc", 0x08: "backspace", 0x2D: "insert", 0x2E: "delete",
+    0x24: "home", 0x23: "end", 0x21: "pageup", 0x22: "pagedown", 0x26: "up", 0x28: "down", 0x25: "left",
+    0x27: "right", 0x2C: "printscreen", 0x13: "pause", 0x91: "scrolllock", 0xC0: "`", 0xBD: "-", 0xBB: "=",
+    0xDB: "[", 0xDD: "]", 0xDC: "\\", 0xBA: ";", 0xDE: "'", 0xBC: ",", 0xBE: ".", 0xBF: "/",
+}  # fmt: skip
+MODIFIER_VKS = {
+    0x10: "shift", 0xA0: "shift", 0xA1: "shift",
+    0x11: "ctrl", 0xA2: "ctrl", 0xA3: "ctrl",
+    0x12: "alt", 0xA4: "alt", 0xA5: "alt",
+    0x5B: "win", 0x5C: "win",
+}  # fmt: skip
+_MODIFIER_ORDER = ("ctrl", "alt", "shift", "win")
+_DISPLAY = {
+    "ctrl": "Ctrl", "alt": "Alt", "shift": "Shift", "win": "Win", "esc": "Esc", "pageup": "Page Up",
+    "pagedown": "Page Down", "printscreen": "Print Screen", "scrolllock": "Scroll Lock", "backspace": "Backspace",
+}  # fmt: skip
+
+
+def key_name(vk: int) -> str | None:
+    """Our name for a virtual-key code, or None if hotkeys can't use it."""
+    if 0x41 <= vk <= 0x5A or 0x30 <= vk <= 0x39:
+        return chr(vk).lower()
+    if 0x70 <= vk <= 0x87:
+        return f"f{vk - 0x6F}"
+    if 0x60 <= vk <= 0x69:
+        return f"num{vk - 0x60}"
+    return _CANONICAL.get(vk)
+
+
+def spec_from_keys(modifiers: set[str], vk: int) -> str | None:
+    """Build a hotkey spec from held modifiers and the pressed key's virtual-key code."""
+    key = key_name(vk)
+    if key is None:
+        return None
+    return "+".join([m for m in _MODIFIER_ORDER if m in modifiers] + [key])
+
+
+def keycaps(spec: str) -> list[str]:
+    """'ctrl+shift+n' -> ['Ctrl', 'Shift', 'N'] for display."""
+    caps = []
+    for part in (p.strip().lower() for p in spec.split("+") if p.strip()):
+        if part == "control":
+            part = "ctrl"
+        is_fkey = part.startswith("f") and part[1:].isdigit()
+        caps.append(_DISPLAY.get(part, part.upper() if len(part) == 1 or is_fkey else part.title()))
+    return caps
+
+
 def _vk(name: str) -> int:
     if len(name) == 1 and (name.isalpha() or name.isdigit()):
         return ord(name.upper())

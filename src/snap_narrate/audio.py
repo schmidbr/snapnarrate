@@ -26,8 +26,11 @@ PROGRESS_INTERVAL_SEC = 0.1
 # tick(frames_heard) -> keep_going. Output calls it before each block (and once at the end)
 # with how many frames have actually reached the speakers so far.
 Tick = Callable[[int], bool]
-# (samples, samplerate, tick) -> None. Plays until done or tick() returns False.
-OutputFn = Callable[[np.ndarray, int, Tick], None]
+# Narration loudness as a multiplier: 1.0 = as synthesized. Read per block, so changes apply live.
+Gain = Callable[[], float]
+MIN_VOLUME, MAX_VOLUME = 0.1, 1.5
+# (samples, samplerate, tick, gain) -> None. Plays until done or tick() returns False.
+OutputFn = Callable[[np.ndarray, int, Tick, Gain], None]
 
 
 def decode_audio(data: bytes, output_format: str) -> tuple[np.ndarray, int]:
@@ -58,7 +61,13 @@ def decode_audio(data: bytes, output_format: str) -> tuple[np.ndarray, int]:
     return samples, int(rate)
 
 
-def sounddevice_output(samples: np.ndarray, rate: int, tick: Tick) -> None:
+def apply_gain(block: np.ndarray, gain: float) -> np.ndarray:
+    if gain == 1.0:
+        return block
+    return np.clip(block * gain, -1.0, 1.0)  # boosts above 100% are limited instead of wrapping
+
+
+def sounddevice_output(samples: np.ndarray, rate: int, tick: Tick, gain: Gain = lambda: 1.0) -> None:
     import sounddevice as sd
 
     channels = 1 if samples.ndim == 1 else samples.shape[1]
@@ -69,7 +78,8 @@ def sounddevice_output(samples: np.ndarray, rate: int, tick: Tick) -> None:
             if not tick(max(0, start - latency_frames)):
                 stream.abort()
                 return
-            stream.write(np.ascontiguousarray(samples[start : start + BLOCK_FRAMES], dtype=np.float32))
+            block = apply_gain(samples[start : start + BLOCK_FRAMES], gain())
+            stream.write(np.ascontiguousarray(block, dtype=np.float32))
     tick(len(samples))  # the context exit waits for the buffer to drain: all of it was heard
 
 
@@ -99,6 +109,7 @@ class AudioPlayer:
         on_chunk_start(session, index, text, duration_sec), on_progress(session, index,
         position_sec, duration_sec) about every 100 ms, on_idle() when the queue drains."""
         self.output_format = output_format
+        self.volume = 1.0
         self.on_chunk_start = on_chunk_start
         self.on_progress = on_progress
         self.on_idle = on_idle
@@ -120,6 +131,14 @@ class AudioPlayer:
     @property
     def session(self) -> int:
         return self._session
+
+    @property
+    def volume(self) -> float:
+        return self._volume
+
+    @volume.setter
+    def volume(self, value: float) -> None:
+        self._volume = min(max(float(value), MIN_VOLUME), MAX_VOLUME)
 
     def play(self, audio: bytes, session: int, text: str = "") -> None:
         """Interrupt anything playing and start `session` with this chunk."""
@@ -179,7 +198,7 @@ class AudioPlayer:
                 except Exception:  # noqa: BLE001
                     logger.exception("event=audio_chunk_callback_failed")
             try:
-                self._output(chunk.samples, chunk.rate, self._make_tick(chunk))
+                self._output(chunk.samples, chunk.rate, self._make_tick(chunk), lambda: self.volume)
             except Exception as exc:  # noqa: BLE001
                 logger.warning("event=audio_playback_failed error=%s", exc)
 

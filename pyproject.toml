@@ -16,6 +16,7 @@ dependencies = [
   "numpy>=2.0",
   "sounddevice>=0.5",
   "soundfile>=0.13",
+  "customtkinter>=6.0",
 ]
 
 [project.optional-dependencies]

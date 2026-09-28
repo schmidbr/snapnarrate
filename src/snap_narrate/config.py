@@ -88,6 +88,7 @@ class ElevenLabsConfig:
     model_id: str = "eleven_multilingual_v2"
     speech_fast_model_id: str = ""
     output_format: str = "mp3_44100_128"
+    voice_name: str = ""  # display name for voice_id, remembered so Settings can show it offline
 
 
 @dataclass
@@ -95,6 +96,9 @@ class CaptureConfig:
     hotkey: str = "ctrl+shift+n"
     region_hotkey: str = "ctrl+shift+r"
     stop_hotkey: str = "ctrl+shift+s"
+    # Optional; empty = not bound.
+    volume_up_hotkey: str = ""
+    volume_down_hotkey: str = ""
     mode: str = "fullscreen"
     sound_name: str = DEFAULT_CAPTURE_SOUND_NAME
     cooldown_ms: int = 1500
@@ -124,6 +128,7 @@ class PlaybackConfig:
     initial_chunk_chars: int = 220
     followup_chunk_chars: int = 650
     followup_min_chars: int = 60
+    volume: float = 1.0  # narration loudness, 0.1-1.5 (independent of the Windows volume)
 
 
 @dataclass
@@ -319,6 +324,7 @@ def _normalize(cfg: AppConfig) -> None:
     cfg.playback.initial_chunk_chars = max(cfg.playback.initial_chunk_chars, 80)
     cfg.playback.followup_chunk_chars = max(cfg.playback.followup_chunk_chars, cfg.playback.initial_chunk_chars)
     cfg.playback.followup_min_chars = max(cfg.playback.followup_min_chars, 20)
+    cfg.playback.volume = min(max(cfg.playback.volume, 0.1), 1.5)
     cfg.hud.font_size = min(max(cfg.hud.font_size, 10), 72)
     cfg.hud.opacity = min(max(cfg.hud.opacity, 0.2), 1.0)
     if not 1024 <= cfg.api.port <= 65535:

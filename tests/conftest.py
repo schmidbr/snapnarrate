@@ -50,10 +50,12 @@ class RecordingOutput:
 
     def __init__(self) -> None:
         self.played: list[int] = []
+        self.gains: list[float] = []
         self.gate: threading.Event | None = None  # when set, playback blocks until released
 
-    def __call__(self, samples: np.ndarray, rate: int, tick: Callable[[int], bool]) -> None:
+    def __call__(self, samples: np.ndarray, rate: int, tick: Callable[[int], bool], gain: Callable[[], float] = lambda: 1.0) -> None:
         self.played.append(len(samples))
+        self.gains.append(gain())
         if not tick(0):
             return
         if self.gate is not None:

@@ -95,6 +95,7 @@ class Engine:
             self.capturer = capturer
             self.narrator = narrator
             self.player.output_format = cfg.elevenlabs.output_format
+            self.player.volume = cfg.playback.volume
             self._capture_mode = cfg.capture.mode
         self._publish_status()
 
@@ -176,6 +177,15 @@ class Engine:
     def toggle_pause(self) -> bool:
         self.set_paused(not self._paused)
         return self._paused
+
+    @property
+    def volume(self) -> float:
+        return self.player.volume
+
+    def set_volume(self, volume: float) -> float:
+        """Narration loudness (0.1-1.5). Applies within ~50 ms, even mid-sentence."""
+        self.player.volume = volume
+        return self.player.volume
 
     def set_capture_mode(self, mode: str) -> None:
         if mode not in CAPTURE_MODES:

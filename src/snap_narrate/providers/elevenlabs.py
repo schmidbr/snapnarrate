@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
 import requests
@@ -53,11 +54,56 @@ class ElevenLabsSpeech:
 
     def list_voices(self) -> list[tuple[str, str]]:
         """[(voice_id, name)] for every voice available to this API key."""
+        return [(voice.voice_id, voice.name) for voice in self.voices()]
+
+    def voices(self) -> list["Voice"]:
+        """Every voice available to this API key, with descriptive labels, sorted by name."""
         response = self._session.get(f"{API_BASE}/voices", headers=self._headers(), timeout=self.timeout_sec)
+        if response.status_code in (401, 403):
+            raise ValueError("ElevenLabs rejected the API key. Check it in Settings.")
         if response.status_code >= 400:
             raise RuntimeError(f"ElevenLabs voices failed ({response.status_code}): {response.text[:200]}")
-        voices = response.json().get("voices", [])
-        return sorted(
-            ((str(v.get("voice_id", "")), str(v.get("name", ""))) for v in voices),
-            key=lambda item: item[1].lower(),
+        voices = [Voice.from_api(v) for v in response.json().get("voices", []) if v.get("voice_id")]
+        return sorted(voices, key=lambda voice: voice.name.lower())
+
+    def fetch_preview(self, voice: "Voice") -> bytes:
+        """The voice's public sample clip (MP3). Free: it does not use character credits."""
+        if not voice.preview_url:
+            raise ValueError(f"{voice.name} has no sample clip")
+        response = self._session.get(voice.preview_url, timeout=self.timeout_sec)
+        response.raise_for_status()
+        return response.content
+
+
+@dataclass(frozen=True)
+class Voice:
+    voice_id: str
+    name: str
+    category: str = ""  # premade, cloned, generated, professional
+    labels: tuple[tuple[str, str], ...] = ()
+    preview_url: str = ""
+
+    @classmethod
+    def from_api(cls, data: dict[str, Any]) -> "Voice":
+        labels = data.get("labels") or {}
+        return cls(
+            voice_id=str(data.get("voice_id", "")),
+            name=str(data.get("name", "")).strip() or "Unnamed voice",
+            category=str(data.get("category") or ""),
+            labels=tuple((str(k), str(v)) for k, v in labels.items() if v),
+            preview_url=str(data.get("preview_url") or ""),
         )
+
+    @property
+    def details(self) -> str:
+        """'American · Middle aged · Male · Narration' style summary for pickers."""
+        values = dict(self.labels)
+        parts = [values.get(key, "") for key in ("accent", "age", "gender", "use_case", "use case", "descriptive", "description")]
+        seen: list[str] = []
+        for part in parts:
+            cleaned = part.replace("_", " ").strip()
+            if cleaned and cleaned.lower() not in (s.lower() for s in seen):
+                seen.append(cleaned[:1].upper() + cleaned[1:])
+        if self.category and self.category not in ("premade",):
+            seen.append(self.category.title())
+        return " · ".join(seen[:4])

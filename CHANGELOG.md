@@ -4,6 +4,27 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-09-28
+
+A redesigned app window, and volume control for narration.
+
+### Added
+
+- **New SnapNarrate window**, replacing the old Settings dialog. It has sidebar pages (Home, Voice, Reading, Hotkeys, Overlay, Advanced, About), a Windows 11 look that follows your light or dark theme, and sharp scaling on high-DPI displays.
+- **Home page:** shows whether SnapNarrate is ready, needs setup, or isn't running, with a button to fix each case. It also has Test voice, Run self-test, and quick settings.
+- **Voice picker by name:** voices are listed by name with accent, age, gender and style, and can be searched. Sample playback uses ElevenLabs' free preview clips, so it costs no credits.
+- **Shortcut recorder:** click a shortcut and press the new keys. It warns about invalid or duplicate shortcuts, and pauses SnapNarrate's own shortcuts while you record so pressing them doesn't trigger a capture.
+- **Narration volume** from 10% to 150%, independent of the Windows volume: a slider that applies live, even mid-sentence, a Volume menu in the tray, and optional louder/quieter shortcuts.
+- An unsaved-changes bar with Save and Discard, and a prompt if you close with unsaved changes.
+- When the window is opened on its own, it can start SnapNarrate if it isn't already running.
+
+### Changed
+
+- **Reorganized tray menu:** a status line at the top, shortcut hints beside each command, and Volume and Capture submenus. Double-clicking the tray icon opens SnapNarrate. Run at sign-in moved to the Home page.
+- Saving settings no longer also shows a Windows notification; the window confirms the save itself.
+- The window's background tasks (loading voices, fetching samples) now report back on the UI thread.
+- New dependency: CustomTkinter, which provides the modern controls.
+
 ## [0.5.1] - 2026-09-28
 
 Changes from the first in-game test of 0.5.0.

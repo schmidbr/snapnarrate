@@ -35,7 +35,8 @@ class App:
         self.bus = EventBus()
         self.startup = StartupManager(config_path)
         self._exit = threading.Event()
-        self._settings_open = False
+        self._settings: object | None = None
+        self._hotkeys_paused = False
         self._hotkey_errors: dict[str, str | None] = {}
 
     # ---- lifecycle --------------------------------------------------------------------
@@ -122,18 +123,40 @@ class App:
             logger.exception("event=config_reload_failed")
             self.bus.notice(f"Could not reload settings: {exc}", "error")
 
-    def _bind_hotkeys(self, cfg: AppConfig) -> None:
+    def _shortcuts(self, cfg: AppConfig) -> dict[str, tuple[str, object]]:
         engine = self.engine
-        self._hotkey_errors = self.hotkeys.bind(
-            {
-                "Capture": (cfg.capture.hotkey, lambda: engine.capture("hotkey")),
-                "Region capture": (cfg.capture.region_hotkey, lambda: engine.capture_region("hotkey")),
-                "Stop speaking": (cfg.capture.stop_hotkey, engine.stop_speaking),
-            }
-        )
+        shortcuts: dict[str, tuple[str, object]] = {
+            "Read screen": (cfg.capture.hotkey, lambda: engine.capture("hotkey")),
+            "Read region": (cfg.capture.region_hotkey, lambda: engine.capture_region("hotkey")),
+            "Stop speaking": (cfg.capture.stop_hotkey, engine.stop_speaking),
+            "Narration louder": (cfg.capture.volume_up_hotkey, lambda: self.nudge_volume(0.1)),
+            "Narration quieter": (cfg.capture.volume_down_hotkey, lambda: self.nudge_volume(-0.1)),
+        }
+        return {name: binding for name, binding in shortcuts.items() if binding[0]}
+
+    def _bind_hotkeys(self, cfg: AppConfig) -> None:
+        if self._hotkeys_paused:
+            return
+        self._hotkey_errors = self.hotkeys.bind(self._shortcuts(cfg))  # type: ignore[arg-type]
         failed = [f"{name}: {error}" for name, error in self._hotkey_errors.items() if error]
         if failed:
-            self.bus.notice("Some hotkeys could not be set. " + "; ".join(failed), "warning")
+            self.bus.notice("Some shortcuts could not be set. " + "; ".join(failed), "warning")
+
+    def pause_hotkeys(self, paused: bool) -> None:
+        """While Settings records a new shortcut, release ours so pressing it there is harmless."""
+        self._hotkeys_paused = paused
+        if paused:
+            self.hotkeys.bind({})
+        else:
+            self._bind_hotkeys(self.cfg)
+
+    def set_volume(self, volume: float) -> None:
+        applied = self.engine.set_volume(volume)
+        self.cfg.playback.volume = applied
+        self.store.update({"playback.volume": round(applied, 2)})
+
+    def nudge_volume(self, delta: float) -> None:
+        self.set_volume(round(self.engine.volume + delta, 2))
 
     def _addon_context(self, cfg: AppConfig) -> AddonContext:
         return AddonContext(engine=self.engine, bus=self.bus, config=cfg, ui=self.ui, data_dir=user_data_dir())
@@ -144,22 +167,29 @@ class App:
         self.engine.set_capture_mode(mode)
         self.store.update({"capture.mode": mode})  # our own write: not treated as an external edit
 
-    def open_settings(self) -> None:
-        if self._settings_open:
-            return
-        self._settings_open = True
-
+    def open_settings(self, page: str = "home") -> None:
         def closed() -> None:
-            self._settings_open = False
+            self._settings = None
 
         def build() -> None:
-            from snap_narrate.ui.settings import SettingsWindow
+            from snap_narrate.ui.settings import SettingsWindow, WindowActions
 
-            try:
-                SettingsWindow(self.ui.root, self.store, on_saved=self._settings_saved, on_closed=closed, startup=self.startup)
-            except Exception:
-                closed()
-                raise
+            if self._settings is not None:  # already open: bring it forward
+                window = self._settings
+                window.show(page)  # type: ignore[attr-defined]
+                window._bring_forward()  # type: ignore[attr-defined]
+                return
+            actions = WindowActions(
+                app_running=lambda: True,
+                test_voice=self.test_voice,
+                run_self_test=self.run_self_test,
+                pause_hotkeys=lambda paused: threading.Thread(target=self.pause_hotkeys, args=(paused,), daemon=True).start(),
+                set_volume=self.engine.set_volume,  # live preview; saving persists it
+            )
+            self._settings = SettingsWindow(
+                self.ui.root, self.store, on_saved=self._settings_saved, on_closed=closed,
+                startup=self.startup, actions=actions, page=page,
+            )  # fmt: skip
 
         self.ui.submit(build)
 
@@ -169,35 +199,17 @@ class App:
 
     def _apply_saved(self, cfg: AppConfig) -> None:
         try:
-            self.apply_config(cfg)
-            self.bus.notice("Settings saved")
+            self.apply_config(cfg)  # the window itself confirms the save; no notification needed
         except Exception as exc:  # noqa: BLE001
             logger.exception("event=settings_apply_failed")
             self.bus.notice(f"Settings saved, but could not be applied: {exc}", "error")
 
-    def startup_enabled(self) -> bool:
-        try:
-            return self.startup.is_enabled()
-        except Exception:  # noqa: BLE001
-            return False
-
-    def toggle_startup(self) -> None:
-        try:
-            enabled = not self.startup.is_enabled()
-            self.startup.set(enabled)
-            self.bus.notice("SnapNarrate will start when you sign in" if enabled else "Run at sign-in turned off")
-        except Exception as exc:  # noqa: BLE001
-            self.bus.notice(f"Could not change run at sign-in: {exc}", "error")
-
     def show_hotkeys(self) -> None:
-        cfg = self.cfg
+        from snap_narrate.hotkeys import keycaps
+
         lines = [
-            f"{name}: {spec} ({'OK' if not self._hotkey_errors.get(name) else 'not available'})"
-            for name, spec in (
-                ("Capture", cfg.capture.hotkey),
-                ("Region capture", cfg.capture.region_hotkey),
-                ("Stop speaking", cfg.capture.stop_hotkey),
-            )
+            f"{name}: {'+'.join(keycaps(spec))}{'' if not self._hotkey_errors.get(name) else ' (unavailable)'}"
+            for name, (spec, _action) in self._shortcuts(self.cfg).items()
         ]
         self.bus.notice("\n".join(lines))
 

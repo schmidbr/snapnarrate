@@ -22,6 +22,20 @@ cooldown_ms = 1500
     assert cfg.capture.stop_hotkey == "ctrl+shift+x"
 
 
+def test_load_config_normalizes_capture_sound_name(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        """
+[capture]
+sound_name = "Windows Ding.wav"
+""".strip(),
+        encoding="utf-8",
+    )
+
+    cfg = load_config(config_path)
+    assert cfg.capture.sound_name == "Windows Ding"
+
+
 def test_save_config_round_trip(tmp_path: Path) -> None:
     config_path = tmp_path / "config.toml"
     cfg = load_config(config_path)
@@ -49,6 +63,7 @@ def test_save_config_round_trip(tmp_path: Path) -> None:
     cfg.capture.mode = "region"
     cfg.capture.region_hotkey = "ctrl+shift+r"
     cfg.capture.stop_hotkey = "ctrl+shift+s"
+    cfg.capture.sound_name = "Chimes"
     cfg.capture.cooldown_ms = 1800
     cfg.capture.min_region_px = 96
     cfg.capture.max_dimension = 1200
@@ -94,6 +109,7 @@ def test_save_config_round_trip(tmp_path: Path) -> None:
     assert loaded.capture.mode == "region"
     assert loaded.capture.region_hotkey == "ctrl+shift+r"
     assert loaded.capture.stop_hotkey == "ctrl+shift+s"
+    assert loaded.capture.sound_name == "Chimes"
     assert loaded.capture.cooldown_ms == 1800
     assert loaded.capture.min_region_px == 96
     assert loaded.capture.max_dimension == 1200

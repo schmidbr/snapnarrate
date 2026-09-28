@@ -129,6 +129,7 @@ def build_runtime_parts(config_file: Path) -> dict[str, object]:
         "hotkey": cfg.capture.hotkey,
         "region_hotkey": cfg.capture.region_hotkey,
         "stop_hotkey": cfg.capture.stop_hotkey,
+        "capture_sound_name": cfg.capture.sound_name,
         "capture_mode": cfg.capture.mode,
         "min_region_px": cfg.capture.min_region_px,
         "log_path": Path(cfg.log_file),
@@ -162,6 +163,7 @@ def run_command(config_path: Path, game_profile: str, auto_launch: bool = False)
         hotkey=str(parts["hotkey"]),
         region_hotkey=str(parts["region_hotkey"]),
         stop_hotkey=str(parts["stop_hotkey"]),
+        capture_sound_name=str(parts["capture_sound_name"]),
         capture_mode=str(parts["capture_mode"]),
         min_region_px=int(parts["min_region_px"]),
         log_path=log_path,
@@ -254,6 +256,7 @@ def doctor_command(config_path: Path) -> int:
     checks.append(("Capture hotkey configured", bool(cfg.capture.hotkey), cfg.capture.hotkey, True))
     checks.append(("Region hotkey configured", bool(cfg.capture.region_hotkey), cfg.capture.region_hotkey, True))
     checks.append(("Stop hotkey configured", bool(cfg.capture.stop_hotkey), cfg.capture.stop_hotkey, True))
+    checks.append(("Capture sound", bool(cfg.capture.sound_name), cfg.capture.sound_name, True))
     checks.append(("Capture mode", cfg.capture.mode in {"fullscreen", "region"}, cfg.capture.mode, True))
     checks.append(("Min region size", cfg.capture.min_region_px > 0, str(cfg.capture.min_region_px), True))
     checks.append(("Capture max_dimension", cfg.capture.max_dimension >= 0, str(cfg.capture.max_dimension), True))

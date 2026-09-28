@@ -4,6 +4,7 @@ import logging
 import re
 import threading
 import time
+from difflib import SequenceMatcher
 from typing import Callable, Protocol
 
 from snap_narrate.models import ExtractResult, PipelineResult, PipelineTimings
@@ -152,9 +153,16 @@ class NarrationPipeline:
         extract_ms = int(round((extract_end - extract_start) * 1000))
 
         initial_text = normalize_text(extract.text)
-        initial_chunk = self._initial_speech_chunk(initial_text)
+        initial_chunk_chars = self._adaptive_initial_chunk_chars(initial_text, extract)
+        initial_chunk = self._initial_speech_chunk(initial_text, initial_chunk_chars)
         if not initial_chunk or len(initial_chunk) < min(self.min_block_chars, 80):
             return None
+        self.logger.info(
+            "event=speech_first_chunk_policy source_chars=%s chunk_chars=%s more_text_likely=%s",
+            len(initial_text),
+            initial_chunk_chars,
+            extract.more_text_likely,
+        )
 
         if self.dedup_enabled and self.deduper.seen_recently(initial_chunk):
             return self._build_result(
@@ -297,8 +305,33 @@ class NarrationPipeline:
         except Exception as exc:  # noqa: BLE001
             self.logger.warning("event=speech_first_continuation_failed error=%s", exc)
 
-    def _initial_speech_chunk(self, text: str) -> str:
-        return self._chunk_text(text, self.initial_chunk_chars)
+    def _initial_speech_chunk(self, text: str, chunk_chars: int | None = None) -> str:
+        return self._chunk_text(text, chunk_chars or self.initial_chunk_chars)
+
+    def _adaptive_initial_chunk_chars(self, text: str, extract: ExtractResult) -> int:
+        normalized = normalize_text(text)
+        if not normalized:
+            return self.initial_chunk_chars
+
+        chunk_chars = self.initial_chunk_chars
+        paragraphs = [part.strip() for part in normalized.split("\n") if part.strip()]
+        first_paragraph_len = len(paragraphs[0]) if paragraphs else 0
+        total_chars = len(normalized)
+
+        if extract.more_text_likely is False and total_chars <= max(self.initial_chunk_chars + 80, 320):
+            return max(chunk_chars, total_chars)
+
+        if extract.more_text_likely is True:
+            chunk_chars = min(chunk_chars, 190)
+
+        if total_chars >= 520 or first_paragraph_len >= 420:
+            chunk_chars = min(chunk_chars, 140)
+        elif extract.more_text_likely is True and (total_chars >= 360 or first_paragraph_len >= 280):
+            chunk_chars = min(chunk_chars, 150)
+        elif total_chars >= 360 or first_paragraph_len >= 280:
+            chunk_chars = min(chunk_chars, 170)
+
+        return max(110, chunk_chars)
 
     def _chunk_text(self, text: str, chunk_chars: int) -> str:
         normalized = normalize_text(text)
@@ -348,6 +381,9 @@ class NarrationPipeline:
             return full
         if full.lower().startswith(spoken.lower()):
             return full[len(spoken) :].strip()
+        spoken_idx = full.lower().find(spoken.lower())
+        if 0 <= spoken_idx <= 24:
+            return full[spoken_idx + len(spoken) :].strip()
 
         max_overlap = min(len(full), len(spoken), 500)
         overlap = 0
@@ -355,7 +391,66 @@ class NarrationPipeline:
             if spoken[-size:].lower() == full[:size].lower():
                 overlap = size
                 break
-        return full[overlap:].strip()
+        if overlap:
+            return full[overlap:].strip()
+
+        fuzzy_remaining = self._fuzzy_remaining_text(full, spoken)
+        if fuzzy_remaining is not None:
+            return fuzzy_remaining
+
+        self.logger.info(
+            "event=speech_first_alignment_failed spoken_chars=%s full_chars=%s",
+            len(spoken),
+            len(full),
+        )
+        return ""
+
+    def _fuzzy_remaining_text(self, full_text: str, spoken_text: str) -> str | None:
+        spoken = spoken_text.strip()
+        full = full_text.strip()
+        if not spoken or not full:
+            return None
+
+        min_prefix = max(40, int(len(spoken) * 0.55))
+        search_limit = min(len(full), max(len(spoken) + 220, int(len(spoken) * 1.5)))
+        candidate_endings: set[int] = {min(len(full), len(spoken)), search_limit}
+        prefix_window = full[:search_limit]
+
+        for match in re.finditer(r"(?<=[.!?])(?:\s+|$)", prefix_window):
+            candidate_endings.add(match.start())
+
+        for idx in range(min_prefix, search_limit + 1, 24):
+            candidate_endings.add(idx)
+            boundary = prefix_window.rfind(" ", 0, idx + 1)
+            if boundary > 0:
+                candidate_endings.add(boundary)
+
+        best_end = -1
+        best_score = 0.0
+        spoken_lower = spoken.lower()
+        for end in sorted(candidate_endings):
+            if end < min_prefix or end > len(full):
+                continue
+            prefix = full[:end].strip()
+            if not prefix:
+                continue
+            ratio = SequenceMatcher(None, spoken_lower, prefix.lower()).ratio()
+            closeness_penalty = abs(len(prefix) - len(spoken)) / max(len(spoken), 1)
+            score = ratio - (closeness_penalty * 0.08)
+            if score > best_score:
+                best_score = score
+                best_end = end
+
+        if best_end < 0:
+            return None
+
+        if best_score < 0.72:
+            return None
+
+        remaining = full[best_end:].strip()
+        if remaining.startswith((",", ";", ":", ")", "]")):
+            remaining = remaining[1:].lstrip()
+        return remaining
 
     def _followup_chunks(self, text: str) -> list[str]:
         paragraphs = [part.strip() for part in text.split("\n") if part.strip()]

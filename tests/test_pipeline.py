@@ -367,6 +367,143 @@ def test_pipeline_speech_first_continues_when_initial_extract_signals_more_text(
     assert result.status == "played"
     assert extractor.full_extract_calls == 1
     assert player.queued == 1
+
+
+def test_adaptive_initial_chunk_chars_keeps_short_complete_block_intact() -> None:
+    pipeline = NarrationPipeline(
+        extractor=FakeExtractor(ExtractResult(text="Story text " * 20, confidence=0.9)),
+        tts=FlakyTTS(fail_times=0),
+        player=FakePlayer(),
+        min_block_chars=20,
+        dedup_enabled=False,
+        dedup_similarity_threshold=0.95,
+        retry_count=0,
+        retry_backoff_ms=1,
+        speech_first_enabled=True,
+        initial_chunk_chars=180,
+        sleep_fn=lambda _: None,
+    )
+
+    text = "A short complete paragraph that should be spoken as one block without being aggressively shortened."
+    extract = ExtractResult(text=text, confidence=0.98, more_text_likely=False)
+
+    chunk_chars = pipeline._adaptive_initial_chunk_chars(text, extract)
+    initial_chunk = pipeline._initial_speech_chunk(text, chunk_chars)
+
+    assert chunk_chars >= len(text)
+    assert initial_chunk == text
+
+
+def test_adaptive_initial_chunk_chars_reduces_long_continuing_block() -> None:
+    pipeline = NarrationPipeline(
+        extractor=FakeExtractor(ExtractResult(text="Story text " * 20, confidence=0.9)),
+        tts=FlakyTTS(fail_times=0),
+        player=FakePlayer(),
+        min_block_chars=20,
+        dedup_enabled=False,
+        dedup_similarity_threshold=0.95,
+        retry_count=0,
+        retry_backoff_ms=1,
+        speech_first_enabled=True,
+        initial_chunk_chars=220,
+        sleep_fn=lambda _: None,
+    )
+
+    text = (
+        "This is a long first paragraph designed to keep running for quite a while before it reaches a natural stopping point. "
+        "It keeps describing the scene in enough detail that the adaptive policy should clamp the initial spoken chunk to start audio sooner. "
+        "Another sentence extends the opening even more so the total block is clearly large enough to trigger the tighter cap."
+    )
+    extract = ExtractResult(text=text, confidence=0.95, more_text_likely=True)
+
+    chunk_chars = pipeline._adaptive_initial_chunk_chars(text, extract)
+    initial_chunk = pipeline._initial_speech_chunk(text, chunk_chars)
+
+    assert chunk_chars == 150
+    assert len(initial_chunk) <= 150
+
+
+def test_remaining_text_uses_fuzzy_prefix_alignment_for_rephrased_opening() -> None:
+    pipeline = NarrationPipeline(
+        extractor=FakeExtractor(ExtractResult(text="Story text " * 20, confidence=0.9)),
+        tts=FlakyTTS(fail_times=0),
+        player=FakePlayer(),
+        min_block_chars=20,
+        dedup_enabled=False,
+        dedup_similarity_threshold=0.95,
+        retry_count=0,
+        retry_backoff_ms=1,
+        speech_first_enabled=True,
+        sleep_fn=lambda _: None,
+    )
+
+    spoken = "He glanced around the ruined chapel. The candles were all cold and dark."
+    full = (
+        "He glanced around the ruined chapel, noting that the candles were all cold and dark. "
+        "A draft moved through the broken door."
+    )
+
+    remaining = pipeline._remaining_text(full, spoken)
+
+    assert remaining == "A draft moved through the broken door."
+
+
+def test_pipeline_speech_first_skips_followup_when_full_extract_only_repeats_opening(monkeypatch) -> None:
+    class CountingExtractor(FakeExtractor):
+        def __init__(self, result: ExtractResult, initial_result: ExtractResult) -> None:
+            super().__init__(result=result, initial_result=initial_result)
+            self.full_extract_calls = 0
+
+        def extract_narrative_text(self, image_bytes: bytes, game_profile: str = "default") -> ExtractResult:
+            self.full_extract_calls += 1
+            return self.result
+
+    extractor = CountingExtractor(
+        result=ExtractResult(
+            text="He glanced around the ruined chapel, noting that the candles were all cold and dark.",
+            confidence=0.95,
+        ),
+        initial_result=ExtractResult(
+            text="He glanced around the ruined chapel. The candles were all cold and dark.",
+            confidence=0.98,
+            more_text_likely=True,
+        ),
+    )
+    player = FakePlayer()
+    pipeline = NarrationPipeline(
+        extractor=extractor,
+        tts=FlakyTTS(fail_times=0),
+        player=player,
+        min_block_chars=10,
+        dedup_enabled=False,
+        dedup_similarity_threshold=0.95,
+        retry_count=0,
+        retry_backoff_ms=1,
+        speech_first_enabled=True,
+        initial_chunk_chars=140,
+        followup_chunk_chars=140,
+        followup_min_chars=20,
+        sleep_fn=lambda _: None,
+    )
+
+    class ImmediateThread:
+        def __init__(self, target, args=(), kwargs=None, daemon=None):  # noqa: ANN001,ARG002
+            self._target = target
+            self._args = args
+            self._kwargs = kwargs or {}
+
+        def start(self) -> None:
+            self._target(*self._args, **self._kwargs)
+
+    monkeypatch.setattr("snap_narrate.pipeline.threading.Thread", ImmediateThread)
+
+    result = pipeline.process_capture(b"img")
+
+    assert result.status == "played"
+    assert extractor.full_extract_calls == 1
+    assert player.queued == 0
+
+
 def test_followup_chunks_skip_tiny_tail() -> None:
     pipeline = NarrationPipeline(
         extractor=FakeExtractor(ExtractResult(text="Story text " * 20, confidence=0.9)),

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import sys
+import types
 from pathlib import Path
 
 from snap_narrate.models import PipelineResult, PipelineTimings
@@ -38,6 +40,7 @@ def _runtime(region_selector):
         capture_mode="fullscreen",
         min_region_px=64,
         log_path=Path("logs/test.log"),
+        capture_sound_name="Windows Balloon",
         region_selector=region_selector,
     )
 
@@ -142,3 +145,50 @@ def test_runtime_self_test_rejects_parallel_runs() -> None:
     rt._tray_run_self_test(None, None)  # type: ignore[arg-type]
 
     assert notifications == ["Self-test already running"]
+
+
+def test_play_capture_sound_prefers_windows_balloon_sound(monkeypatch, tmp_path) -> None:
+    rt = _runtime(lambda: None)
+    calls: list[tuple[str, int]] = []
+    fake_winsound = types.SimpleNamespace(
+        PlaySound=lambda sound, flags: calls.append((sound, flags)),
+        SND_FILENAME=1,
+        SND_ASYNC=2,
+        SND_NODEFAULT=4,
+        SND_ALIAS=8,
+    )
+    monkeypatch.setitem(sys.modules, "winsound", fake_winsound)
+    monkeypatch.setenv("WINDIR", str(tmp_path))
+
+    media_dir = tmp_path / "Media"
+    media_dir.mkdir()
+    expected = media_dir / "Windows Balloon.wav"
+    expected.write_bytes(b"wav")
+
+    rt._play_capture_sound()
+
+    assert calls == [(str(expected), 7)]
+
+
+def test_play_capture_sound_uses_selected_windows_sound(monkeypatch, tmp_path) -> None:
+    rt = _runtime(lambda: None)
+    rt.capture_sound_name = "Windows Ding"
+    calls: list[tuple[str, int]] = []
+    fake_winsound = types.SimpleNamespace(
+        PlaySound=lambda sound, flags: calls.append((sound, flags)),
+        SND_FILENAME=1,
+        SND_ASYNC=2,
+        SND_NODEFAULT=4,
+        SND_ALIAS=8,
+    )
+    monkeypatch.setitem(sys.modules, "winsound", fake_winsound)
+    monkeypatch.setenv("WINDIR", str(tmp_path))
+
+    media_dir = tmp_path / "Media"
+    media_dir.mkdir()
+    expected = media_dir / "Windows Ding.wav"
+    expected.write_bytes(b"wav")
+
+    rt._play_capture_sound()
+
+    assert calls == [(str(expected), 7)]

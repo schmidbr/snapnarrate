@@ -18,6 +18,7 @@ def test_get_app_version_falls_back_to_pyproject(monkeypatch, tmp_path: Path) ->
         raise versioning.importlib_metadata.PackageNotFoundError
 
     monkeypatch.setattr("snap_narrate.versioning.importlib_metadata.version", raise_not_found)
+    monkeypatch.setattr("snap_narrate.versioning.package_version", "")
 
     fake_pkg = tmp_path / "x" / "y"
     fake_pkg.mkdir(parents=True, exist_ok=True)
@@ -35,5 +36,18 @@ def test_get_app_version_returns_unknown_when_unavailable(monkeypatch) -> None:
         raise RuntimeError("boom")
 
     monkeypatch.setattr("snap_narrate.versioning.importlib_metadata.version", raise_generic)
+    monkeypatch.setattr("snap_narrate.versioning.package_version", "")
     monkeypatch.setattr("snap_narrate.versioning.Path.open", lambda *args, **kwargs: (_ for _ in ()).throw(FileNotFoundError()))
     assert versioning.get_app_version() == "unknown"
+
+
+def test_get_app_version_falls_back_to_package_version(monkeypatch) -> None:
+    versioning.get_app_version.cache_clear()
+
+    def raise_not_found(name):  # noqa: ANN001
+        raise versioning.importlib_metadata.PackageNotFoundError
+
+    monkeypatch.setattr("snap_narrate.versioning.importlib_metadata.version", raise_not_found)
+    monkeypatch.setattr("snap_narrate.versioning.package_version", "0.4.2")
+
+    assert versioning.get_app_version() == "0.4.2"

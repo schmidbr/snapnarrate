@@ -1,6 +1,7 @@
 ﻿from __future__ import annotations
 
 import logging
+import os
 import threading
 import time
 from dataclasses import dataclass
@@ -14,6 +15,7 @@ from pystray import Menu, MenuItem
 
 from snap_narrate.icon_utils import load_tray_icon
 from snap_narrate.capture import Bounds, ScreenCapturer, is_valid_bounds
+from snap_narrate.config import DEFAULT_CAPTURE_SOUND_NAME, WINDOWS_CAPTURE_SOUND_OPTIONS, normalize_capture_sound_name
 from snap_narrate.pipeline import NarrationPipeline
 from snap_narrate.region_selector import select_region_bounds
 from snap_narrate.self_test import create_self_test_image_bytes
@@ -39,6 +41,7 @@ class SnapNarrateRuntime:
         capture_mode: str,
         min_region_px: int,
         log_path: Path,
+        capture_sound_name: str = DEFAULT_CAPTURE_SOUND_NAME,
         game_profile: str = "default",
         config_path: Path | None = None,
         reload_callback: Callable[[Path], dict[str, Any]] | None = None,
@@ -52,6 +55,7 @@ class SnapNarrateRuntime:
         self.hotkey = hotkey
         self.region_hotkey = region_hotkey
         self.stop_hotkey = stop_hotkey
+        self.capture_sound_name = normalize_capture_sound_name(capture_sound_name)
         self.min_region_px = int(min_region_px)
         self.log_path = log_path
         self.game_profile = game_profile
@@ -486,6 +490,9 @@ class SnapNarrateRuntime:
             self.hotkey = str(update.get("hotkey", self.hotkey))
             self.region_hotkey = str(update.get("region_hotkey", self.region_hotkey))
             self.stop_hotkey = str(update.get("stop_hotkey", self.stop_hotkey))
+            self.capture_sound_name = normalize_capture_sound_name(
+                str(update.get("capture_sound_name", self.capture_sound_name))
+            )
             mode = str(update.get("capture_mode", self.state.capture_mode)).strip().lower()
             self.state.capture_mode = mode if mode in {"fullscreen", "region"} else "fullscreen"
             self.min_region_px = int(update.get("min_region_px", self.min_region_px))
@@ -561,9 +568,23 @@ class SnapNarrateRuntime:
         try:
             import winsound
 
+            sound_path = self._capture_sound_path()
+            if sound_path.exists():
+                winsound.PlaySound(
+                    str(sound_path),
+                    winsound.SND_FILENAME | winsound.SND_ASYNC | winsound.SND_NODEFAULT,
+                )
+                return
+
             winsound.PlaySound("SystemAsterisk", winsound.SND_ALIAS | winsound.SND_ASYNC)
         except Exception as exc:  # noqa: BLE001
             self.logger.warning("event=capture_sound_failed error=%s", exc)
+
+    def _capture_sound_path(self) -> Path:
+        filename = WINDOWS_CAPTURE_SOUND_OPTIONS.get(self.capture_sound_name)
+        if not filename:
+            filename = WINDOWS_CAPTURE_SOUND_OPTIONS[DEFAULT_CAPTURE_SOUND_NAME]
+        return Path(os.environ.get("WINDIR", r"C:\Windows")) / "Media" / filename
 
     @staticmethod
     def _make_icon() -> Image.Image:

@@ -96,6 +96,7 @@ def test_run_command_builds_startup_manager_with_explicit_launch_args(tmp_path: 
     assert captured["pipeline_kwargs"]["initial_chunk_chars"] == 220
     assert captured["pipeline_kwargs"]["followup_chunk_chars"] == 650
     assert captured["pipeline_kwargs"]["followup_min_chars"] == 60
+    assert captured["runtime_kwargs"]["capture_sound_name"] == "Windows Balloon"
     assert captured["started"] is True
 
 

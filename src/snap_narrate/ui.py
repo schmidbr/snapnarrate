@@ -4,7 +4,13 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import messagebox, ttk
 
-from snap_narrate.config import AppConfig, init_config, load_config, save_config
+from snap_narrate.config import (
+    WINDOWS_CAPTURE_SOUND_OPTIONS,
+    AppConfig,
+    init_config,
+    load_config,
+    save_config,
+)
 from snap_narrate.startup import StartupManager
 from snap_narrate.versioning import get_app_version
 
@@ -143,6 +149,15 @@ class SettingsUI:
         self._add_entry(frame, row, "Region Capture Hotkey", "capture.region_hotkey", self.cfg.capture.region_hotkey)
         row += 1
         self._add_entry(frame, row, "Stop Hotkey", "capture.stop_hotkey", self.cfg.capture.stop_hotkey)
+        row += 1
+        self._add_combobox(
+            frame,
+            row,
+            "Capture Sound",
+            "capture.sound_name",
+            self.cfg.capture.sound_name,
+            list(WINDOWS_CAPTURE_SOUND_OPTIONS),
+        )
         row += 1
         self._add_entry(frame, row, "Capture Cooldown (ms)", "capture.cooldown_ms", str(self.cfg.capture.cooldown_ms))
         row += 1
@@ -293,6 +308,7 @@ class SettingsUI:
         cfg.capture.mode = str(self.vars["capture.mode"].get()).strip().lower()
         cfg.capture.region_hotkey = str(self.vars["capture.region_hotkey"].get()).strip()
         cfg.capture.stop_hotkey = str(self.vars["capture.stop_hotkey"].get()).strip()
+        cfg.capture.sound_name = str(self.vars["capture.sound_name"].get()).strip()
         cfg.capture.cooldown_ms = self._to_int("capture.cooldown_ms")
         cfg.capture.min_region_px = self._to_int("capture.min_region_px")
         cfg.capture.max_dimension = self._to_int("capture.max_dimension")

@@ -4,6 +4,30 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-03-31
+
+### Added
+
+- Settings now include a dropdown for choosing the screenshot capture sound from a curated set of built-in Windows sounds.
+
+### Changed
+
+- Capture sound selection is now saved in config and hot-reloads into the tray runtime without requiring a rebuild or manual config edits.
+
+## [0.4.1] - 2026-03-31
+
+### Changed
+
+- Speech-first narration now adapts the first spoken chunk size based on how long the extracted block is and whether more text likely follows, so long passages begin speaking sooner without chopping up short complete passages.
+- Screenshot capture feedback now uses the Windows Balloon sound when it is available.
+
+## [0.4.0] - 2026-03-31
+
+### Changed
+
+- Speech-first continuation now uses fuzzy tail alignment so follow-up narration does not replay opening lines when the fast first pass and the full extraction phrase the same text slightly differently.
+- Capture feedback now prefers the Windows camera shutter sound effect when it is available.
+
 ## [0.3.9] - 2026-03-29
 
 ### Changed

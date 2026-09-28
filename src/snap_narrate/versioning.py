@@ -7,6 +7,8 @@ from typing import Any
 
 import tomllib
 
+from snap_narrate import __version__ as package_version
+
 
 @lru_cache(maxsize=1)
 def get_app_version() -> str:
@@ -16,6 +18,9 @@ def get_app_version() -> str:
         pass
     except Exception:  # noqa: BLE001
         pass
+
+    if isinstance(package_version, str) and package_version.strip():
+        return package_version.strip()
 
     try:
         pyproject = Path(__file__).resolve().parents[2] / "pyproject.toml"

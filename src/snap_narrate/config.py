@@ -8,6 +8,15 @@ from typing import Any
 
 
 DEFAULT_CONFIG_PATH = Path("config.toml")
+WINDOWS_CAPTURE_SOUND_OPTIONS: dict[str, str] = {
+    "Windows Balloon": "Windows Balloon.wav",
+    "Windows Camera": "Windows Camera.wav",
+    "Windows Ding": "Windows Ding.wav",
+    "Windows Notify": "Windows Notify System Generic.wav",
+    "Chimes": "chimes.wav",
+    "Tada": "tada.wav",
+}
+DEFAULT_CAPTURE_SOUND_NAME = "Windows Balloon"
 
 
 @dataclass
@@ -56,6 +65,7 @@ class CaptureConfig:
     mode: str = "fullscreen"
     region_hotkey: str = "ctrl+shift+r"
     stop_hotkey: str = "ctrl+shift+s"
+    sound_name: str = DEFAULT_CAPTURE_SOUND_NAME
     cooldown_ms: int = 1500
     min_region_px: int = 64
     max_dimension: int = 1600
@@ -135,6 +145,16 @@ def _env_bool(name: str, default: bool) -> bool:
     return default
 
 
+def normalize_capture_sound_name(value: str) -> str:
+    name = value.strip()
+    if name in WINDOWS_CAPTURE_SOUND_OPTIONS:
+        return name
+    for option_name, filename in WINDOWS_CAPTURE_SOUND_OPTIONS.items():
+        if name.lower() == filename.lower():
+            return option_name
+    return DEFAULT_CAPTURE_SOUND_NAME
+
+
 def load_config(path: Path) -> AppConfig:
     content: dict[str, Any] = {}
     if path.exists():
@@ -202,6 +222,9 @@ def load_config(path: Path) -> AppConfig:
             mode=str(capture_data.get("mode", CaptureConfig.mode)).strip().lower(),
             region_hotkey=str(capture_data.get("region_hotkey", CaptureConfig.region_hotkey)),
             stop_hotkey=str(capture_data.get("stop_hotkey", CaptureConfig.stop_hotkey)),
+            sound_name=normalize_capture_sound_name(
+                str(capture_data.get("sound_name", CaptureConfig.sound_name))
+            ),
             cooldown_ms=int(capture_data.get("cooldown_ms", CaptureConfig.cooldown_ms)),
             min_region_px=int(capture_data.get("min_region_px", CaptureConfig.min_region_px)),
             max_dimension=int(capture_data.get("max_dimension", CaptureConfig.max_dimension)),
@@ -306,6 +329,7 @@ def load_config(path: Path) -> AppConfig:
         cfg.capture.image_format = "jpeg"
     if cfg.capture.image_format not in {"png", "jpeg"}:
         cfg.capture.image_format = CaptureConfig.image_format
+    cfg.capture.sound_name = normalize_capture_sound_name(cfg.capture.sound_name)
     cfg.capture.max_dimension = max(cfg.capture.max_dimension, 0)
     cfg.capture.jpeg_quality = min(max(cfg.capture.jpeg_quality, 1), 100)
     cfg.playback.initial_chunk_chars = max(cfg.playback.initial_chunk_chars, 80)
@@ -359,6 +383,7 @@ hotkey = "ctrl+shift+n"
 mode = "fullscreen"
 region_hotkey = "ctrl+shift+r"
 stop_hotkey = "ctrl+shift+s"
+sound_name = "Windows Balloon"
 cooldown_ms = 1500
 min_region_px = 64
 max_dimension = 1600
@@ -442,6 +467,7 @@ hotkey = {_toml_str(cfg.capture.hotkey)}
 mode = {_toml_str(cfg.capture.mode)}
 region_hotkey = {_toml_str(cfg.capture.region_hotkey)}
 stop_hotkey = {_toml_str(cfg.capture.stop_hotkey)}
+sound_name = {_toml_str(cfg.capture.sound_name)}
 cooldown_ms = {cfg.capture.cooldown_ms}
 min_region_px = {cfg.capture.min_region_px}
 max_dimension = {cfg.capture.max_dimension}

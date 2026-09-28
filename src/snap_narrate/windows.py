@@ -94,6 +94,19 @@ def play_capture_sound(name: str) -> None:
         logger.warning("event=capture_sound_failed error=%s", exc)
 
 
+def is_app_running(name: str = MUTEX_NAME) -> bool:
+    """True if the tray app holds its single-instance mutex (without taking it ourselves)."""
+    try:
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.OpenMutexW(0x00100000, False, name)  # SYNCHRONIZE
+    except (AttributeError, OSError):
+        return False
+    if not handle:
+        return False
+    kernel32.CloseHandle(handle)
+    return True
+
+
 class SingleInstance:
     """Named mutex held for the app's lifetime. The installer uses it to detect a running copy."""
 

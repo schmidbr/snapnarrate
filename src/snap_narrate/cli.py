@@ -191,7 +191,12 @@ def cmd_test_capture(args: argparse.Namespace) -> int:
 def cmd_self_test(args: argparse.Namespace) -> int:
     from snap_narrate.engine import Engine
     from snap_narrate.logs import setup_logging
+    from snap_narrate.windows import is_app_running
 
+    if is_app_running():
+        # A second engine would talk over the tray app, and the tray's Stop could not silence it.
+        print("SnapNarrate is running in the tray. Use its menu: Tools > Run Self-Test.")
+        return 2
     cfg = load_config(_config_path(args))
     setup_logging(cfg.log_path)
     engine = Engine(cfg, profile=f"{args.game_profile}-self-test")

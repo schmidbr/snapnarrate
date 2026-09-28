@@ -19,6 +19,11 @@ and a proper Windows packaging setup. Existing `config.toml` files keep working.
 - Toggling the capture mode from the tray no longer triggers a full reload, which used to stop speech and reset duplicate detection.
 - Region selection and the Settings window no longer create Tk windows from different threads, which could hang or crash.
 - The first spoken chunk is now capped even when the text has no sentence punctuation.
+- **Narration no longer stops after the first sentence.** When the quick first read already returned the whole passage and the model reported nothing more on screen, everything after the first chunk was discarded. The rest of that read is now spoken, with no second read needed.
+- A short opening line, such as a speaker name, no longer throws away the first read and triggers a slower second one. It becomes a quick first chunk instead.
+- Short real lines at the end of a passage (like "Farewell.") are kept, attached to the chunk before them, instead of being dropped as noise.
+- Duplicate detection compares the whole first read, so two dialogues that open with the same speaker line aren't treated as repeats.
+- `self-test` from the command line refuses to run while the tray app is running, because two voices would overlap and the tray's Stop couldn't silence the second one.
 
 ### Changed
 

@@ -107,31 +107,37 @@ def should_continue(more_text_likely: bool | None, spoken: str, initial_chars: i
 
 
 def remaining_after(full_text: str, spoken_text: str) -> str:
-    """The part of full_text not yet covered by spoken_text.
+    """The part of full_text not yet covered by spoken_text (see align_remaining)."""
+    return align_remaining(full_text, spoken_text)[0]
+
+
+def align_remaining(full_text: str, spoken_text: str) -> tuple[str, bool]:
+    """(the part of full_text not yet covered by spoken_text, whether the match was exact).
 
     The quick first pass and the full pass can phrase the opening slightly differently, so
     this tries an exact prefix, a near-start substring, a suffix/prefix overlap, then a
     fuzzy prefix match. Returns "" when the two cannot be aligned (never replays the start).
+    A fuzzy match can leave a few stray words at the start of the result.
     """
     full = normalize_text(full_text)
     spoken = normalize_text(spoken_text)
     if not full or not spoken:
-        return full
+        return full, True
 
     full_lower, spoken_lower = full.lower(), spoken.lower()
     if full_lower.startswith(spoken_lower):
-        return full[len(spoken) :].strip()
+        return full[len(spoken) :].strip(), True
 
     idx = full_lower.find(spoken_lower)
     if 0 <= idx <= 24:
-        return full[idx + len(spoken) :].strip()
+        return full[idx + len(spoken) :].strip(), True
 
     for size in range(min(len(full), len(spoken), 500), 20, -1):
         if spoken_lower[-size:] == full_lower[:size]:
-            return full[size:].strip()
+            return full[size:].strip(), True
 
     fuzzy = _fuzzy_remaining(full, spoken)
-    return fuzzy if fuzzy is not None else ""
+    return (fuzzy, False) if fuzzy is not None else ("", False)
 
 
 def _fuzzy_remaining(full: str, spoken: str) -> str | None:
@@ -168,23 +174,26 @@ def _fuzzy_remaining(full: str, spoken: str) -> str | None:
     return remaining
 
 
-def followup_chunks(text: str, chunk_chars: int, min_chars: int) -> list[str]:
-    """Split the remaining text into TTS-sized chunks along paragraph and sentence lines,
-    dropping fragments shorter than min_chars."""
-    chunks: list[str] = []
+def followup_chunks(text: str, chunk_chars: int, min_chars: int = 1) -> list[str]:
+    """Split text into TTS-sized chunks along paragraph and sentence lines.
+
+    Pieces shorter than min_chars ride along with the chunk before them, so short lines
+    ("Farewell.") are never lost. Only a short piece with nothing before it is dropped:
+    that is where stray words from a fuzzy alignment end up. Pass min_chars=1 for text
+    that is known exactly.
+    """
+    pieces: list[str] = []
     for paragraph in paragraphs(text):
         remaining = paragraph
         while remaining:
-            if len(remaining) <= chunk_chars:
-                if len(remaining) >= min_chars:
-                    chunks.append(remaining)
-                break
-            head = head_chunk(remaining, chunk_chars)
-            if not head or head == remaining:
-                if len(remaining) >= min_chars:
-                    chunks.append(remaining)
-                break
-            if len(head) >= min_chars:
-                chunks.append(head)
+            head = (head_chunk(remaining, chunk_chars) if len(remaining) > chunk_chars else remaining) or remaining
+            pieces.append(head)
             remaining = remaining[len(head) :].strip()
+
+    chunks: list[str] = []
+    for piece in pieces:
+        if len(piece) >= min_chars:
+            chunks.append(piece)
+        elif chunks:
+            chunks[-1] = f"{chunks[-1]}\n{piece}"
     return chunks

@@ -22,6 +22,7 @@ from snap_narrate.providers.base import SpeechProvider, VisionProvider
 from snap_narrate.text import (
     TextDeduper,
     adaptive_initial_chars,
+    align_remaining,
     followup_chunks,
     head_chunk,
     normalize_text,
@@ -162,11 +163,16 @@ class Narrator:
         chunk_chars = adaptive_initial_chars(initial_text, extract.more_text_likely, self.settings.initial_chunk_chars)
         first = head_chunk(initial_text, chunk_chars)
 
-        if not first or len(first) < min(self.settings.min_block_chars, 80):
-            logger.info("event=speech_first_fallback reason=short_first_chunk chars=%s", len(first))
+        # Judge the whole first read, not just its first line: a short opening line such as a
+        # speaker name is a fine (and fast) first chunk when real text follows it.
+        if not first or len(initial_text) < min(self.settings.min_block_chars, 80):
+            logger.info("event=speech_first_fallback reason=short_first_read chars=%s", len(initial_text))
             return None
-        if dedup and self.settings.dedup_enabled and self.deduper.seen_recently(first):
-            return NarrationResult("skipped", "Already read this text", len(first), first, Timings(extract_ms, 0, self._ms_since(start)))
+        # Dedup on the whole first read: two dialogues can open with the same speaker line.
+        if dedup and self.settings.dedup_enabled and self.deduper.seen_recently(initial_text):
+            return NarrationResult(
+                "skipped", "Already read this text", len(initial_text), initial_text, Timings(extract_ms, 0, self._ms_since(start))
+            )
         if session.cancelled:
             return NarrationResult("cancelled", "Cancelled", len(first), first)
 
@@ -176,22 +182,25 @@ class Narrator:
             chunk_chars,
             extract.more_text_likely,
         )
-        self._publish_text(session, first, final=False)
+        self._publish_text(session, initial_text, final=False)
 
         def remaining_chunks() -> list[str]:
-            if not should_continue(extract.more_text_likely, first, self.settings.initial_chunk_chars):
-                logger.info("event=speech_first_continuation_skipped reason=complete")
-                self._publish_text(session, first, final=True)
-                return []
+            chunk_size = self.settings.followup_chunk_chars
+            if not should_continue(extract.more_text_likely, initial_text, self.settings.initial_chunk_chars):
+                # The first read already holds the whole passage: speak the rest of it, no second read.
+                self._publish_text(session, initial_text, final=True)
+                rest = remaining_after(initial_text, first)
+                logger.info("event=speech_first_single_read remaining_chars=%s", len(rest))
+                return followup_chunks(rest, chunk_size)
             full = normalize_text(self.vision.extract(image, profile).text)
-            rest = remaining_after(full, first)
-            if full:
-                self._publish_text(session, full, final=True)
-            if not rest:
-                logger.info("event=speech_first_continuation_skipped reason=no_remaining_text")
-            return followup_chunks(rest, self.settings.followup_chunk_chars, self.settings.followup_min_chars)
+            if not full:  # the second read found nothing: fall back to what the first read had
+                full = initial_text
+            self._publish_text(session, full, final=True)
+            rest, exact = align_remaining(full, first)
+            logger.info("event=speech_first_second_read full_chars=%s remaining_chars=%s exact=%s", len(full), len(rest), exact)
+            return followup_chunks(rest, chunk_size, 1 if exact else self.settings.followup_min_chars)
 
-        return self._speak([first], session, start, extract_ms, fast_first=True, text=first, more=remaining_chunks)
+        return self._speak([first], session, start, extract_ms, fast_first=True, text=initial_text, more=remaining_chunks)
 
     # ---- speaking ---------------------------------------------------------------------
 

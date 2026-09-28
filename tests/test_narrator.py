@@ -140,3 +140,61 @@ def test_plan_is_final_immediately_on_full_path(player: AudioPlayer) -> None:
     narrator.bus = bus
     narrator.narrate(b"img", Session(1))
     assert len(plans) == 1 and plans[0]["final"] is True and len(plans[0]["chunk_chars"]) > 1
+
+
+# ---- regressions from the first in-game test ---------------------------------------------
+
+PASSAGE = (
+    "The caravan crossed the dunes at dusk, lanterns swinging from every wagon. "
+    "Nobody spoke of the storm they had outrun.\n"
+    "At the oasis, the elder waited with a map drawn on cracked leather. "
+    "She traced a path to the ruins and warned them twice about the well.\n"
+    "Farewell."
+)
+
+
+def spoken(speech: FakeSpeech) -> str:
+    return " ".join(text for text, _fast in speech.calls)
+
+
+def test_whole_first_read_is_spoken_when_model_says_nothing_more(player: AudioPlayer) -> None:
+    """18:16:12: the first read returned the whole passage (more_text_likely=False) but only
+    the first 147 characters were spoken."""
+    vision = FakeVision(full=ExtractResult("unused"), first=ExtractResult(PASSAGE, more_text_likely=False))
+    speech = FakeSpeech()
+    make(vision, speech, player, speech_first_enabled=True).narrate(b"img", Session(1))
+    said = spoken(speech)
+    for sentence in ("caravan crossed", "storm they had outrun", "elder waited", "about the well", "Farewell."):
+        assert sentence in said
+    assert vision.full_calls == 0  # no second read needed
+
+
+def test_short_first_line_starts_fast_without_rereading(player: AudioPlayer) -> None:
+    """18:10:23: a 48-character opening line made it discard the first read and read again."""
+    text = "Captain Varro:\n" + PASSAGE
+    vision = FakeVision(full=ExtractResult("unused"), first=ExtractResult(text, more_text_likely=False))
+    speech = FakeSpeech()
+    result = make(vision, speech, player, speech_first_enabled=True).narrate(b"img", Session(1))
+    assert result.played and result.chars == len(text)
+    assert speech.calls[0] == ("Captain Varro:", True)
+    assert "caravan crossed" in spoken(speech) and vision.full_calls == 0
+
+
+def test_same_speaker_line_is_not_mistaken_for_a_repeat(player: AudioPlayer) -> None:
+    narrator = make(FakeVision(ExtractResult("unused")), FakeSpeech(), player, speech_first_enabled=True)
+    narrator.vision = FakeVision(ExtractResult("x"), first=ExtractResult("Captain Varro:\n" + PASSAGE, more_text_likely=False))
+    assert narrator.narrate(b"a", Session(1)).played
+    other = "Captain Varro:\nThe gates are closed until dawn, and no coin will open them tonight, friend."
+    narrator.vision = FakeVision(ExtractResult("x"), first=ExtractResult(other, more_text_likely=False))
+    assert narrator.narrate(b"b", Session(2)).played
+
+
+def test_second_read_used_when_more_text_is_likely(player: AudioPlayer) -> None:
+    first_para = PASSAGE.split("\n")[0]
+    vision = FakeVision(full=ExtractResult(PASSAGE), first=ExtractResult(first_para, more_text_likely=True))
+    speech = FakeSpeech()
+    make(vision, speech, player, speech_first_enabled=True).narrate(b"img", Session(1))
+    said = spoken(speech)
+    assert vision.full_calls == 1
+    assert said.count("caravan crossed") == 1  # the opening is not repeated
+    assert "elder waited" in said and "Farewell." in said

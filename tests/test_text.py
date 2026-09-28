@@ -1,6 +1,7 @@
 from snap_narrate.text import (
     TextDeduper,
     adaptive_initial_chars,
+    align_remaining,
     followup_chunks,
     head_chunk,
     normalize_text,
@@ -67,9 +68,23 @@ def test_remaining_after_unalignable_returns_empty() -> None:
     assert remaining_after("Totally unrelated text about ships and harbors at dawn.", "Nothing in common with the other passage here.") == ""
 
 
-def test_followup_chunks_split_and_drop_tiny_tails() -> None:
+def test_followup_chunks_split_and_keep_short_lines() -> None:
     para = "One two three four five. " * 20
-    chunks = followup_chunks(para + "\nok", chunk_chars=120, min_chars=20)
-    assert all(len(c) <= 125 for c in chunks)
-    assert "ok" not in chunks
+    chunks = followup_chunks(para + "\nFarewell.", chunk_chars=120, min_chars=20)
+    assert all(len(c) <= 125 + len("\nFarewell.") for c in chunks)
+    assert chunks[-1].endswith("\nFarewell.")  # a short real line rides along instead of being lost
     assert " ".join(chunks).count("One") == 20
+
+
+def test_followup_chunks_drop_only_a_leading_stray_fragment() -> None:
+    chunks = followup_chunks("light.\nThe stairs descended into a darkness that seemed to breathe.", 200, min_chars=20)
+    assert chunks == ["The stairs descended into a darkness that seemed to breathe."]
+    assert followup_chunks("Hi.\nShort.", 200) == ["Hi.", "Short."]  # min_chars=1: exact text, nothing dropped
+
+
+def test_align_remaining_reports_exactness() -> None:
+    assert align_remaining("Alpha beta.\nGamma delta.", "Alpha beta.") == ("Gamma delta.", True)
+    spoken = "The ancient door creaked open, revealing a hall lit by a single guttering torch."
+    full = "The ancient door creaked open revealing a hall lit by one guttering torch.\nBeyond it, the stairs."
+    rest, exact = align_remaining(full, spoken)
+    assert rest.startswith("Beyond it") and exact is False

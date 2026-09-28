@@ -1,7 +1,3 @@
-"""SnapNarrate game narrator package."""
+"""SnapNarrate: read on-screen game text aloud with AI vision and ElevenLabs voices."""
 
-__version__ = "0.4.2"
-
-__all__ = [
-    "cli",
-]
+__version__ = "0.5.0"

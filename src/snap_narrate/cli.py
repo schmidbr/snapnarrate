@@ -1,517 +1,279 @@
-﻿from __future__ import annotations
+"""Command line. With no arguments, starts the tray app (this is what the installed exe does)."""
+
+from __future__ import annotations
 
 import argparse
-import ctypes
 import json
+import logging
 import sys
 import time
 from pathlib import Path
+from typing import Callable
 
-from snap_narrate.config import DEFAULT_CONFIG_PATH, init_config, load_config
-from snap_narrate.extractor_factory import build_extractor
-from snap_narrate.icon_utils import icon_asset_path
-from snap_narrate.launch import launch_command, resolve_default_config_path
-from snap_narrate.logging_utils import setup_logging
-from snap_narrate.shortcuts import ShortcutManager
-from snap_narrate.startup import StartupManager
-from snap_narrate.self_test import create_self_test_image_bytes
-from snap_narrate.ui import launch_settings_ui_with_startup
-from snap_narrate.usage import UsageService
-from snap_narrate.versioning import get_app_version
+from snap_narrate.config import ConfigStore, init_config, load_config, missing_required
+from snap_narrate.paths import default_config_path, is_frozen
+from snap_narrate.version import get_app_version
+
+logger = logging.getLogger("snap_narrate")
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="snapnarrate", description="SnapNarrate game narrator")
+    parser = argparse.ArgumentParser(prog="snapnarrate", description="Read on-screen game text aloud.")
     parser.add_argument("--version", action="version", version=f"SnapNarrate {get_app_version()}")
-    sub = parser.add_subparsers(dest="command", required=True)
+    sub = parser.add_subparsers(dest="command")
 
-    run = sub.add_parser("run", help="Run the hotkey + tray narrator")
-    run.add_argument("--config", type=Path, default=DEFAULT_CONFIG_PATH)
-    run.add_argument("--game-profile", default="default")
+    def command(name: str, help_text: str, profile: bool = False) -> argparse.ArgumentParser:
+        p = sub.add_parser(name, help=help_text)
+        p.add_argument("--config", type=Path, default=None, help="config file (default: %%APPDATA%%\\SnapNarrate\\config.toml)")
+        if profile:
+            p.add_argument("--game-profile", default="default", help="hint passed to the vision model")
+        return p
 
-    doctor = sub.add_parser("doctor", help="Validate local setup")
-    doctor.add_argument("--config", type=Path, default=DEFAULT_CONFIG_PATH)
-
-    voices = sub.add_parser("voices", help="List TTS voices")
-    voices.add_argument("--config", type=Path, default=DEFAULT_CONFIG_PATH)
-    voices.add_argument("--provider", choices=["elevenlabs"], default="elevenlabs")
-
-    test_capture = sub.add_parser("test-capture", help="Take one screenshot and print extraction output")
-    test_capture.add_argument("--config", type=Path, default=DEFAULT_CONFIG_PATH)
-    test_capture.add_argument("--game-profile", default="default")
-
-    self_test = sub.add_parser("self-test", help="Run a fixture-based extraction to playback self-test")
-    self_test.add_argument("--config", type=Path, default=DEFAULT_CONFIG_PATH)
-    self_test.add_argument("--game-profile", default="default")
-
-    ui = sub.add_parser("ui", help="Open desktop settings UI")
-    ui.add_argument("--config", type=Path, default=DEFAULT_CONFIG_PATH)
-
-    install_shortcut = sub.add_parser("install-shortcut", help="Create desktop shortcut")
-    install_shortcut.add_argument("--config", type=Path, default=DEFAULT_CONFIG_PATH)
-
-    startup = sub.add_parser("startup", help="Manage run-at-startup")
-    startup.add_argument("--config", type=Path, default=DEFAULT_CONFIG_PATH)
-    startup_group = startup.add_mutually_exclusive_group()
-    startup_group.add_argument("--enable", action="store_true")
-    startup_group.add_argument("--disable", action="store_true")
-    startup_group.add_argument("--status", action="store_true")
-
-    usage = sub.add_parser("usage", help="Show OpenAI and ElevenLabs usage/credits")
-    usage.add_argument("--config", type=Path, default=DEFAULT_CONFIG_PATH)
+    command("run", "start the tray app", profile=True)
+    command("ui", "open the settings window")
+    command("doctor", "check configuration and connectivity")
+    command("voices", "list ElevenLabs voices for your API key")
+    command("test-capture", "capture the screen once and print the extracted text", profile=True)
+    command("self-test", "extract and speak a built-in sample page", profile=True)
+    startup = command("startup", "manage run at sign-in")
+    group = startup.add_mutually_exclusive_group()
+    group.add_argument("--enable", action="store_true")
+    group.add_argument("--disable", action="store_true")
+    usage = command("usage", "show OpenAI usage and ElevenLabs credits")
     usage.add_argument("--json", action="store_true", dest="as_json")
-
-    sub.add_parser("version", help="Show SnapNarrate version")
-
-    cfg = sub.add_parser("config", help="Config helpers")
+    sub.add_parser("version", help="print the version")
+    cfg = sub.add_parser("config", help="config helpers")
     cfg_sub = cfg.add_subparsers(dest="config_command", required=True)
-    cfg_init = cfg_sub.add_parser("init", help="Create config.toml")
-    cfg_init.add_argument("--config", type=Path, default=DEFAULT_CONFIG_PATH)
-    cfg_init.add_argument("--force", action="store_true")
-
+    init = cfg_sub.add_parser("init", help="write a default config")
+    init.add_argument("--config", type=Path, default=None)
+    init.add_argument("--force", action="store_true")
+    path = cfg_sub.add_parser("path", help="print the config path in use")
+    path.add_argument("--config", type=Path, default=None)
     return parser
 
 
-def _required_settings_missing(cfg: object) -> bool:
-    from snap_narrate.config import AppConfig
-
-    if not isinstance(cfg, AppConfig):
-        return True
-    if not cfg.elevenlabs.api_key or not cfg.elevenlabs.voice_id:
-        return True
-    if cfg.vision.provider == "openai":
-        return not (cfg.openai.api_key and cfg.openai.model)
-    if cfg.vision.provider == "ollama":
-        return not (cfg.ollama.base_url and cfg.ollama.model)
-    return True
+def _config_path(args: argparse.Namespace) -> Path:
+    return getattr(args, "config", None) or default_config_path()
 
 
-def build_runtime_parts(config_file: Path) -> dict[str, object]:
-    from snap_narrate.capture import ScreenCapturer
-    from snap_narrate.elevenlabs_client import ElevenLabsClient, TempFileAudioPlayer
-    from snap_narrate.pipeline import NarrationPipeline
-
-    cfg = load_config(config_file)
-    extractor = build_extractor(cfg)
-    tts = ElevenLabsClient(
-        api_key=cfg.elevenlabs.api_key,
-        voice_id=cfg.elevenlabs.voice_id,
-        model_id=cfg.elevenlabs.model_id,
-        speech_fast_model_id=cfg.elevenlabs.speech_fast_model_id,
-        output_format=cfg.elevenlabs.output_format,
-    )
-    player = TempFileAudioPlayer()
-    pipeline = NarrationPipeline(
-        extractor=extractor,
-        tts=tts,
-        player=player,
-        min_block_chars=cfg.filter.min_block_chars,
-        dedup_enabled=cfg.dedup.enabled,
-        dedup_similarity_threshold=cfg.dedup.similarity_threshold,
-        retry_count=cfg.playback.retry_count,
-        retry_backoff_ms=cfg.playback.retry_backoff_ms,
-        speech_first_enabled=cfg.playback.speech_first_enabled,
-        initial_chunk_chars=cfg.playback.initial_chunk_chars,
-        followup_chunk_chars=cfg.playback.followup_chunk_chars,
-        followup_min_chars=cfg.playback.followup_min_chars,
-    )
-    capturer = ScreenCapturer(
-        cooldown_ms=cfg.capture.cooldown_ms,
-        save_debug=cfg.debug.save_screenshots,
-        debug_dir=cfg.debug.screenshot_dir,
-        max_dimension=cfg.capture.max_dimension,
-        image_format=cfg.capture.image_format,
-        jpeg_quality=cfg.capture.jpeg_quality,
-    )
-    return {
-        "capturer": capturer,
-        "pipeline": pipeline,
-        "hotkey": cfg.capture.hotkey,
-        "region_hotkey": cfg.capture.region_hotkey,
-        "stop_hotkey": cfg.capture.stop_hotkey,
-        "capture_sound_name": cfg.capture.sound_name,
-        "capture_mode": cfg.capture.mode,
-        "min_region_px": cfg.capture.min_region_px,
-        "log_path": Path(cfg.log_file),
-        "usage_service": UsageService.from_config(cfg),
-    }
+# ---- commands ---------------------------------------------------------------------------
 
 
-def run_command(config_path: Path, game_profile: str, auto_launch: bool = False) -> int:
-    from snap_narrate.runtime import SnapNarrateRuntime
+def cmd_run(args: argparse.Namespace) -> int:
+    from snap_narrate.app import App
 
-    target, args, workdir = launch_command(config_path)
-    icon_path = str(icon_asset_path()) if icon_asset_path().exists() else None
-    startup_manager = StartupManager(ShortcutManager(), target=target, arguments=args, working_dir=workdir, icon_path=icon_path)
-
-    cfg_for_bootstrap = load_config(config_path)
-    if auto_launch and _required_settings_missing(cfg_for_bootstrap):
-        launch_settings_ui_with_startup(config_path, startup_manager)
-        cfg_for_bootstrap = load_config(config_path)
-        if _required_settings_missing(cfg_for_bootstrap):
-            print("Setup incomplete. Configure required settings to start.")
-            return 1
-
-    parts = build_runtime_parts(config_path)
-    log_path = setup_logging(str(parts["log_path"]))
-    startup_notice = "SnapNarrate is running in tray." if auto_launch else None
-    if auto_launch and cfg_for_bootstrap.vision.provider == "ollama":
-        startup_notice = "SnapNarrate is running. If extraction fails, open tray > Settings."
-    runtime = SnapNarrateRuntime(
-        capturer=parts["capturer"],  # type: ignore[arg-type]
-        pipeline=parts["pipeline"],  # type: ignore[arg-type]
-        hotkey=str(parts["hotkey"]),
-        region_hotkey=str(parts["region_hotkey"]),
-        stop_hotkey=str(parts["stop_hotkey"]),
-        capture_sound_name=str(parts["capture_sound_name"]),
-        capture_mode=str(parts["capture_mode"]),
-        min_region_px=int(parts["min_region_px"]),
-        log_path=log_path,
-        game_profile=game_profile,
-        config_path=config_path,
-        reload_callback=build_runtime_parts,
-        startup_manager=startup_manager,
-        usage_service=parts.get("usage_service"),  # type: ignore[arg-type]
-        startup_notice=startup_notice,
-    )
-    runtime.start()
-    return 0
+    return App(_config_path(args), profile=getattr(args, "game_profile", "default")).run()
 
 
-def doctor_command(config_path: Path) -> int:
+def cmd_ui(args: argparse.Namespace) -> int:
+    from snap_narrate.ui.settings import run_standalone
+    from snap_narrate.windows import StartupManager, enable_dpi_awareness
+
+    enable_dpi_awareness()
+    path = _config_path(args)
+    return run_standalone(ConfigStore(path), startup=StartupManager(path))
+
+
+def cmd_doctor(args: argparse.Namespace) -> int:
     import requests
 
-    cfg = load_config(config_path)
+    from snap_narrate import providers
+    from snap_narrate.hotkeys import parse_hotkey
 
-    checks: list[tuple[str, bool, str, bool]] = []
-    checks.append(("Config file exists", config_path.exists(), str(config_path), True))
-    checks.append(("Vision provider", cfg.vision.provider in {"openai", "ollama"}, cfg.vision.provider, True))
-    checks.append(("Vision timeout_sec", cfg.vision.timeout_sec > 0, str(cfg.vision.timeout_sec), True))
-    checks.append(("Vision fast_mode", isinstance(cfg.vision.fast_mode, bool), str(cfg.vision.fast_mode), True))
-    checks.append(("Vision ultra_fast_mode", isinstance(cfg.vision.ultra_fast_mode, bool), str(cfg.vision.ultra_fast_mode), True))
-    if cfg.vision.provider == "openai":
-        checks.append(("OPENAI key", bool(cfg.openai.api_key), "Set openai.api_key or OPENAI_API_KEY", True))
-        checks.append(("OPENAI model", bool(cfg.openai.model), cfg.openai.model, True))
-        checks.append(("OPENAI ultra_fast_model", True, cfg.openai.ultra_fast_model or "(using primary model)", False))
-        checks.append(("OPENAI base_url", bool(cfg.openai.base_url), cfg.openai.base_url, True))
-    if cfg.vision.provider == "ollama":
-        checks.append(("OLLAMA base_url", bool(cfg.ollama.base_url), cfg.ollama.base_url, True))
-        checks.append(("OLLAMA model", bool(cfg.ollama.model), cfg.ollama.model, True))
-        checks.append(("OLLAMA ultra_fast_model", True, cfg.ollama.ultra_fast_model or "(using primary model)", False))
-        checks.append(("OLLAMA num_predict", cfg.ollama.num_predict > 0, str(cfg.ollama.num_predict), True))
-        checks.append(("OLLAMA temperature", 0 <= cfg.ollama.temperature <= 2, str(cfg.ollama.temperature), True))
-        checks.append(("OLLAMA top_p", 0 < cfg.ollama.top_p <= 1, str(cfg.ollama.top_p), True))
-        checks.append(("OLLAMA continuation_attempts", cfg.ollama.continuation_attempts >= 0, str(cfg.ollama.continuation_attempts), True))
-        checks.append(("OLLAMA min_paragraphs", cfg.ollama.min_paragraphs >= 1, str(cfg.ollama.min_paragraphs), True))
-        checks.append(
-            (
-                "OLLAMA coverage_retry_attempts",
-                cfg.ollama.coverage_retry_attempts >= 0,
-                str(cfg.ollama.coverage_retry_attempts),
-                True,
-            )
-        )
-        checks.append(
-            (
-                "OLLAMA num_predict recommendation",
-                cfg.ollama.num_predict >= 1200,
-                "Use >=1200 for multi-paragraph completeness",
-                False,
-            )
-        )
-        checks.append(
-            (
-                "OLLAMA coverage_retry recommendation",
-                cfg.ollama.coverage_retry_attempts >= 1,
-                "Use >=1 to auto-retry low paragraph coverage",
-                False,
-            )
-        )
+    path = _config_path(args)
+    cfg = load_config(path)
+    results: list[tuple[str, bool, str, bool]] = []  # name, ok, detail, required
+
+    def check(name: str, ok: bool, detail: str = "", required: bool = True) -> None:
+        results.append((name, ok, detail, required))
+
+    check("Config file", path.exists(), str(path))
+    for warning in cfg.warnings:
+        check("Config value", False, warning, required=False)
+    missing = missing_required(cfg)
+    check("Required settings", not missing, ", ".join(missing) or "all set")
+    for key in ("capture.hotkey", "capture.region_hotkey", "capture.stop_hotkey"):
         try:
-            base = cfg.ollama.base_url.rstrip("/")
-            tags_resp = requests.get(f"{base}/api/tags", timeout=5)
-            reachable = tags_resp.status_code < 400
-            checks.append(("OLLAMA reachable", reachable, f"GET {base}/api/tags", True))
-            model_found = False
-            if reachable:
-                models = tags_resp.json().get("models", [])
-                names = [str(m.get("name", "")) for m in models]
-                model = cfg.ollama.model.strip()
-                model_found = model in names or f"{model}:latest" in names or model.removesuffix(":latest") in names
-            checks.append(("OLLAMA model available", model_found, cfg.ollama.model, True))
-        except Exception as exc:  # noqa: BLE001
-            checks.append(("OLLAMA reachable", False, str(exc), True))
-            checks.append(("OLLAMA model available", False, cfg.ollama.model, True))
+            parse_hotkey(cfg.get(key))
+            check(f"Hotkey {key}", True, cfg.get(key))
+        except ValueError as exc:
+            check(f"Hotkey {key}", False, str(exc))
+    check("Vision provider", cfg.vision.provider in providers.vision_names(), cfg.vision.provider)
+    if cfg.env_overrides:
+        check("Environment overrides", True, ", ".join(sorted(cfg.env_overrides)), required=False)
 
-    checks.append(("ELEVENLABS key", bool(cfg.elevenlabs.api_key), "Set elevenlabs.api_key or ELEVENLABS_API_KEY", True))
-    checks.append(("ELEVENLABS voice_id", bool(cfg.elevenlabs.voice_id), "Set elevenlabs.voice_id or ELEVENLABS_VOICE_ID", True))
-    checks.append(
-        (
-            "ELEVENLABS speech_fast_model_id",
-            True,
-            cfg.elevenlabs.speech_fast_model_id or "(using primary model)",
-            False,
-        )
-    )
-    checks.append(("Capture hotkey configured", bool(cfg.capture.hotkey), cfg.capture.hotkey, True))
-    checks.append(("Region hotkey configured", bool(cfg.capture.region_hotkey), cfg.capture.region_hotkey, True))
-    checks.append(("Stop hotkey configured", bool(cfg.capture.stop_hotkey), cfg.capture.stop_hotkey, True))
-    checks.append(("Capture sound", bool(cfg.capture.sound_name), cfg.capture.sound_name, True))
-    checks.append(("Capture mode", cfg.capture.mode in {"fullscreen", "region"}, cfg.capture.mode, True))
-    checks.append(("Min region size", cfg.capture.min_region_px > 0, str(cfg.capture.min_region_px), True))
-    checks.append(("Capture max_dimension", cfg.capture.max_dimension >= 0, str(cfg.capture.max_dimension), True))
-    checks.append(("Capture image_format", cfg.capture.image_format in {"png", "jpeg"}, cfg.capture.image_format, True))
-    checks.append(("Capture jpeg_quality", 1 <= cfg.capture.jpeg_quality <= 100, str(cfg.capture.jpeg_quality), True))
-    checks.append(
-        ("Playback speech_first_enabled", isinstance(cfg.playback.speech_first_enabled, bool), str(cfg.playback.speech_first_enabled), True)
-    )
-    checks.append(("Playback initial_chunk_chars", cfg.playback.initial_chunk_chars >= 80, str(cfg.playback.initial_chunk_chars), True))
-    checks.append(
-        ("Playback followup_chunk_chars", cfg.playback.followup_chunk_chars >= cfg.playback.initial_chunk_chars, str(cfg.playback.followup_chunk_chars), True)
-    )
-    checks.append(("Playback followup_min_chars", cfg.playback.followup_min_chars >= 20, str(cfg.playback.followup_min_chars), True))
-    usage_service = UsageService.from_config(cfg)
-    snapshot = usage_service.get_snapshot(force_refresh=True)
-    checks.append(
-        (
-            "OPENAI org usage access",
-            snapshot.openai.source == "organization" and snapshot.openai.status == "ok",
-            f"source={snapshot.openai.source} status={snapshot.openai.status}",
-            False,
-        )
-    )
-    checks.append(
-        (
-            "ELEVENLABS subscription reachable",
-            snapshot.elevenlabs.status == "ok",
-            f"status={snapshot.elevenlabs.status}",
-            False,
-        )
-    )
-    try:
-        is_admin = bool(ctypes.windll.shell32.IsUserAnAdmin())
-    except Exception:  # noqa: BLE001
-        is_admin = False
-    checks.append(
-        (
-            "Elevated privileges",
-            is_admin,
-            "Run terminal as Administrator if hotkeys fail in elevated games",
-            False,
-        )
-    )
+    if cfg.vision.provider == "ollama":
+        from snap_narrate.providers.ollama import OllamaVision
+
+        try:
+            models = OllamaVision(cfg.ollama.base_url, cfg.ollama.model).list_models()
+            wanted = cfg.ollama.model
+            found = wanted in models or f"{wanted}:latest" in models or wanted.removesuffix(":latest") in models
+            check("Ollama reachable", True, cfg.ollama.base_url)
+            check("Ollama model installed", found, wanted)
+        except Exception as exc:  # noqa: BLE001
+            check("Ollama reachable", False, str(exc))
+    elif cfg.vision.provider == "openai" and cfg.openai.api_key:
+        try:
+            response = requests.get(
+                f"{cfg.openai.base_url.rstrip('/')}/v1/models",
+                headers={"Authorization": f"Bearer {cfg.openai.api_key}"},
+                timeout=10,
+            )
+            check("OpenAI key accepted", response.status_code < 400, f"HTTP {response.status_code}")
+        except requests.RequestException as exc:
+            check("OpenAI reachable", False, str(exc))
+
+    if cfg.elevenlabs.api_key:
+        try:
+            voices = dict(providers.build_speech(cfg).list_voices())  # type: ignore[attr-defined]
+            check("ElevenLabs key accepted", True, f"{len(voices)} voices")
+            if cfg.elevenlabs.voice_id:
+                check("ElevenLabs voice found", cfg.elevenlabs.voice_id in voices, voices.get(cfg.elevenlabs.voice_id, cfg.elevenlabs.voice_id))
+        except Exception as exc:  # noqa: BLE001
+            check("ElevenLabs key accepted", False, str(exc))
 
     all_ok = True
-    for name, ok, detail, required in checks:
-        status = "OK" if ok else ("FAIL" if required else "WARN")
-        print(f"[{status}] {name}: {detail}")
-        if required:
-            all_ok = all_ok and ok
-
+    for name, ok, detail, required in results:
+        label = "OK  " if ok else ("FAIL" if required else "WARN")
+        print(f"[{label}] {name}: {detail}")
+        all_ok = all_ok and (ok or not required)
     return 0 if all_ok else 1
 
 
-def voices_command(config_path: Path) -> int:
-    from snap_narrate.elevenlabs_client import ElevenLabsClient
+def cmd_voices(args: argparse.Namespace) -> int:
+    from snap_narrate import providers
 
-    cfg = load_config(config_path)
-    client = ElevenLabsClient(
-        api_key=cfg.elevenlabs.api_key,
-        voice_id=cfg.elevenlabs.voice_id,
-        model_id=cfg.elevenlabs.model_id,
-        output_format=cfg.elevenlabs.output_format,
-    )
-    voices = client.list_voices()
-    for voice_id, name in voices:
-        print(f"{name}\t{voice_id}")
+    cfg = load_config(_config_path(args))
+    for voice_id, name in providers.build_speech(cfg).list_voices():  # type: ignore[attr-defined]
+        marker = "*" if voice_id == cfg.elevenlabs.voice_id else " "
+        print(f"{marker} {name}\t{voice_id}")
     return 0
 
 
-def test_capture_command(config_path: Path, game_profile: str) -> int:
+def cmd_test_capture(args: argparse.Namespace) -> int:
+    from snap_narrate import providers
     from snap_narrate.capture import ScreenCapturer
+    from snap_narrate.windows import enable_dpi_awareness
 
-    cfg = load_config(config_path)
-    capturer = ScreenCapturer(
-        cooldown_ms=0,
-        save_debug=cfg.debug.save_screenshots,
-        debug_dir=cfg.debug.screenshot_dir,
-        max_dimension=cfg.capture.max_dimension,
-        image_format=cfg.capture.image_format,
-        jpeg_quality=cfg.capture.jpeg_quality,
-    )
-    image_bytes = capturer.capture_fullscreen_png()
-
-    extractor = build_extractor(cfg)
-    result = extractor.extract_narrative_text(image_bytes=image_bytes, game_profile=game_profile)
+    enable_dpi_awareness()
+    cfg = load_config(_config_path(args))
+    capturer = ScreenCapturer(0, cfg.capture.max_dimension, cfg.capture.image_format, cfg.capture.jpeg_quality)
+    result = providers.build_vision(cfg).extract(capturer.fullscreen(), args.game_profile)
     print(f"Confidence: {result.confidence:.2f}")
     if result.dropped_reason:
-        print(f"Dropped: {result.dropped_reason}")
-    print("Text:")
-    print(result.text)
+        print(f"Note: {result.dropped_reason}")
+    print("Text:\n" + result.text)
     return 0
 
 
-def self_test_command(config_path: Path, game_profile: str) -> int:
-    parts = build_runtime_parts(config_path)
-    setup_logging(str(parts["log_path"]))
-    capturer = parts["capturer"]
-    image_bytes = create_self_test_image_bytes(
-        max_dimension=int(getattr(capturer, "max_dimension", 1400)),
-        image_format=str(getattr(capturer, "image_format", "png")),
-        jpeg_quality=int(getattr(capturer, "jpeg_quality", 90)),
-    )
-    pipeline = parts["pipeline"]
-    result = pipeline.process_self_test(image_bytes=image_bytes, game_profile=f"{game_profile}-self-test")  # type: ignore[attr-defined]
+def cmd_self_test(args: argparse.Namespace) -> int:
+    from snap_narrate.engine import Engine
+    from snap_narrate.logs import setup_logging
 
-    print(f"Self-test status: {result.status}")
-    print(f"Message: {result.message}")
-    print(f"Characters: {result.chars}")
-    if result.timings is not None:
-        print(
-            "Timings (ms): extract={extract} tts={tts} playback={playback} total={total}".format(
-                extract=result.timings.extract_ms,
-                tts=result.timings.tts_ms,
-                playback=result.timings.playback_ms,
-                total=result.timings.total_ms,
-            )
-        )
-    return 0 if result.status == "played" else 1
+    cfg = load_config(_config_path(args))
+    setup_logging(cfg.log_path)
+    engine = Engine(cfg, profile=f"{args.game_profile}-self-test")
+    try:
+        result = engine.self_test()
+        print(f"Status: {result.status} ({result.message})")
+        print(f"Characters: {result.chars}")
+        print(f"Timings (ms): extract={result.timings.extract_ms} tts={result.timings.tts_ms} first_audio={result.timings.total_ms}")
+        if result.played:
+            _wait_for_quiet(lambda: engine.player.is_playing)
+        return 0 if result.played else 1
+    finally:
+        engine.close()
 
 
-def config_init_command(config_path: Path, force: bool) -> int:
-    init_config(config_path, force=force)
-    print(f"Wrote config: {config_path}")
-    return 0
+def _wait_for_quiet(is_playing: Callable[[], bool], quiet_sec: float = 3.0, limit_sec: float = 180.0) -> None:
+    """Let queued narration finish before the process exits (later chunks arrive in the background)."""
+    deadline = time.monotonic() + limit_sec
+    quiet_since = time.monotonic()
+    while time.monotonic() < deadline:
+        if is_playing():
+            quiet_since = time.monotonic()
+        elif time.monotonic() - quiet_since >= quiet_sec:
+            return
+        time.sleep(0.1)
 
 
-def install_shortcut_command(config_path: Path) -> int:
-    manager = ShortcutManager()
-    target, args, workdir = launch_command(config_path)
-    icon_path = str(icon_asset_path()) if icon_asset_path().exists() else None
-    shortcut = manager.create_desktop_shortcut(target=target, arguments=args, working_dir=workdir, icon_path=icon_path)
-    print(f"Desktop shortcut created: {shortcut}")
-    return 0
+def cmd_startup(args: argparse.Namespace) -> int:
+    from snap_narrate.windows import StartupManager
 
-
-def startup_command(config_path: Path, enable: bool, disable: bool, status: bool) -> int:
-    target, args, workdir = launch_command(config_path)
-    icon_path = str(icon_asset_path()) if icon_asset_path().exists() else None
-    manager = StartupManager(ShortcutManager(), target=target, arguments=args, working_dir=workdir, icon_path=icon_path)
-
-    if enable:
-        path = manager.enable()
-        print(f"Run-at-startup enabled: {path}")
-        return 0
-    if disable:
+    manager = StartupManager(_config_path(args))
+    if args.enable:
+        manager.enable()
+    elif args.disable:
         manager.disable()
-        print("Run-at-startup disabled")
+    print(f"Run at sign-in: {'enabled' if manager.is_enabled() else 'disabled'}")
+    return 0
+
+
+def cmd_usage(args: argparse.Namespace) -> int:
+    from snap_narrate.usage import UsageService
+
+    snap = UsageService.from_config(load_config(_config_path(args))).get_snapshot(force_refresh=True)
+    ok = snap.openai.status == "ok" or snap.elevenlabs.status == "ok"
+    if args.as_json:
+        print(json.dumps(snap.to_dict(), indent=2, sort_keys=True))
+        return 0 if ok else 1
+
+    def show(value: object) -> str:
+        return "unavailable" if value is None else f"{value:,}" if isinstance(value, int) else str(value)
+
+    o, e = snap.openai, snap.elevenlabs
+    print(f"OpenAI ({o.status}, source={o.source})")
+    print(f"  Tokens: {o.total_tokens:,} (prompt {o.prompt_tokens:,}, completion {o.completion_tokens:,})")
+    print(f"  Cost this month: {'unavailable' if o.cost_usd is None else f'${o.cost_usd:,.4f}'}")
+    print(f"  Budget remaining: {'unavailable' if o.remaining_usd is None else f'${o.remaining_usd:,.4f}'}")
+    print(f"ElevenLabs ({e.status})")
+    print(f"  Characters used: {show(e.character_count)} of {show(e.character_limit)}")
+    print(f"  Characters left: {show(e.remaining_characters)}")
+    return 0 if ok else 1
+
+
+def cmd_config(args: argparse.Namespace) -> int:
+    path = _config_path(args)
+    if args.config_command == "path":
+        print(path)
         return 0
-
-    enabled = manager.is_enabled()
-    print(f"Run-at-startup: {'enabled' if enabled else 'disabled'}")
+    init_config(path, force=args.force)
+    print(f"Wrote {path}")
     return 0
 
 
-def _fmt_usd(value: float | None) -> str:
-    if value is None:
-        return "unavailable"
-    return f"${value:,.4f}"
-
-
-def usage_command(config_path: Path, as_json: bool = False) -> int:
-    cfg = load_config(config_path)
-    snapshot = UsageService.from_config(cfg).get_snapshot(force_refresh=True)
-
-    if as_json:
-        print(json.dumps(snapshot.to_dict(), indent=2, sort_keys=True))
-        return 0 if (snapshot.openai.status == "ok" or snapshot.elevenlabs.status == "ok") else 1
-
-    period = "n/a"
-    if snapshot.openai.period_start and snapshot.openai.period_end:
-        start = time.strftime("%Y-%m-%d", time.gmtime(snapshot.openai.period_start))
-        end = time.strftime("%Y-%m-%d", time.gmtime(snapshot.openai.period_end))
-        period = f"{start} .. {end}"
-
-    print("OpenAI")
-    print(f"  Status: {snapshot.openai.status}")
-    print(f"  Source: {snapshot.openai.source}")
-    print(f"  Period: {period}")
-    print(
-        "  Tokens: total={total} prompt={prompt} completion={completion}".format(
-            total=snapshot.openai.total_tokens,
-            prompt=snapshot.openai.prompt_tokens,
-            completion=snapshot.openai.completion_tokens,
-        )
-    )
-    print(f"  Cost (USD): {_fmt_usd(snapshot.openai.cost_usd)}")
-    print(f"  Remaining (USD): {_fmt_usd(snapshot.openai.remaining_usd)}")
-    print("")
-    print("ElevenLabs")
-    print(f"  Status: {snapshot.elevenlabs.status}")
-    print(f"  Characters used: {snapshot.elevenlabs.character_count if snapshot.elevenlabs.character_count is not None else 'unavailable'}")
-    print(f"  Character limit: {snapshot.elevenlabs.character_limit if snapshot.elevenlabs.character_limit is not None else 'unavailable'}")
-    print(
-        f"  Remaining characters: {snapshot.elevenlabs.remaining_characters if snapshot.elevenlabs.remaining_characters is not None else 'unavailable'}"
-    )
-    print(f"  Reset (unix): {snapshot.elevenlabs.next_reset_unix if snapshot.elevenlabs.next_reset_unix is not None else 'unavailable'}")
-    return 0 if (snapshot.openai.status == "ok" or snapshot.elevenlabs.status == "ok") else 1
-
-
-def version_command() -> int:
-    print(f"SnapNarrate {get_app_version()}")
-    return 0
+COMMANDS: dict[str, Callable[[argparse.Namespace], int]] = {
+    "run": cmd_run,
+    "ui": cmd_ui,
+    "doctor": cmd_doctor,
+    "voices": cmd_voices,
+    "test-capture": cmd_test_capture,
+    "self-test": cmd_self_test,
+    "startup": cmd_startup,
+    "usage": cmd_usage,
+    "config": cmd_config,
+    "version": lambda _args: print(f"SnapNarrate {get_app_version()}") or 0,
+}
 
 
 def main(argv: list[str] | None = None) -> int:
-    if argv is None:
-        argv = sys.argv[1:]
+    args = build_parser().parse_args(sys.argv[1:] if argv is None else argv)
+    handler = COMMANDS.get(args.command or "run", cmd_run)
+    try:
+        return handler(args)
+    except KeyboardInterrupt:
+        return 130
+    except Exception as exc:
+        logger.exception("event=fatal command=%s", args.command)
+        if is_frozen() and sys.stdout is None:  # windowed exe: nowhere to print
+            from snap_narrate.windows import message_box
 
-    if len(argv) == 0:
-        config_path = resolve_default_config_path()
-        if not config_path.exists():
-            config_path.parent.mkdir(parents=True, exist_ok=True)
-            init_config(config_path, force=True)
-        return run_command(config_path=config_path, game_profile="default", auto_launch=True)
-
-    parser = build_parser()
-    args = parser.parse_args(argv)
-
-    if args.command == "run":
-        return run_command(args.config, args.game_profile, auto_launch=False)
-    if args.command == "doctor":
-        return doctor_command(args.config)
-    if args.command == "voices":
-        return voices_command(args.config)
-    if args.command == "test-capture":
-        return test_capture_command(args.config, args.game_profile)
-    if args.command == "self-test":
-        return self_test_command(args.config, args.game_profile)
-    if args.command == "ui":
-        target, arg_str, workdir = launch_command(args.config)
-        icon_path = str(icon_asset_path()) if icon_asset_path().exists() else None
-        startup_manager = StartupManager(
-            ShortcutManager(),
-            target=target,
-            arguments=arg_str,
-            working_dir=workdir,
-            icon_path=icon_path,
-        )
-        return launch_settings_ui_with_startup(args.config, startup_manager)
-    if args.command == "install-shortcut":
-        return install_shortcut_command(args.config)
-    if args.command == "startup":
-        return startup_command(args.config, args.enable, args.disable, args.status)
-    if args.command == "usage":
-        return usage_command(args.config, args.as_json)
-    if args.command == "version":
-        return version_command()
-    if args.command == "config" and args.config_command == "init":
-        return config_init_command(args.config, args.force)
-
-    parser.print_help()
-    return 1
+            message_box(f"SnapNarrate hit an error and has to close:\n\n{exc}", error=True)
+            return 1
+        raise
 
 
-if __name__ == "__main__":
-    raise SystemExit(main())
-
+def gui_main() -> int:
+    """Entry point for the windowed exe and the `snapnarrate-gui` script."""
+    return main(sys.argv[1:] or ["run"])

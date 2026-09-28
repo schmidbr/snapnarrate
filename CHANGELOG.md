@@ -4,6 +4,47 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-09-28
+
+A cleaner rebuild of the app around a single engine, with fixes for the bugs found in review
+and a proper Windows packaging setup. Existing `config.toml` files keep working.
+
+### Fixed
+
+- The app no longer fails to start on Python 3.11. The config writer used backslashes inside an f-string, which only Python 3.12+ accepts.
+- **Stop Speaking now really stops.** Previously, the rest of a long narration kept being synthesized in the background and started playing again after Stop.
+- **Captures no longer mix.** Taking a new capture while one was still being read could append the old passage's remaining text to the new one.
+- Audio in `pcm_16000`, `pcm_22050`, and `pcm_24000` now plays at the correct speed, and 22 kHz MP3 plays instead of producing noise. The output format is now chosen from a supported list.
+- API keys supplied through environment variables are no longer copied into `config.toml` when settings are saved.
+- Toggling the capture mode from the tray no longer triggers a full reload, which used to stop speech and reset duplicate detection.
+- Region selection and the Settings window no longer create Tk windows from different threads, which could hang or crash.
+- The first spoken chunk is now capped even when the text has no sentence punctuation.
+
+### Changed
+
+- Hotkeys use the Windows `RegisterHotKey` API instead of a global keyboard hook, so the `keyboard` package is no longer a dependency. No keystrokes are observed, admin rights aren't needed, and antivirus tools are less likely to flag the app.
+- Full-screen capture uses the monitor under the mouse cursor instead of always using the primary monitor.
+- Every narration, including the non-speech-first path, now speaks its first chunk right away and streams the rest. Stop takes effect within about 50 ms.
+- The default voice model for new configs is `eleven_multilingual_v2`, chosen for fidelity. An optional faster first-chunk model can be set.
+- Settings are reorganized into tabs. The Voice tab can load your ElevenLabs voices by name and preview them. Values set by environment variables are shown as read-only.
+- Run at sign-in uses the per-user registry Run key instead of a Startup-folder shortcut created with PowerShell. An old shortcut is removed automatically.
+- Relative paths in the config (such as logs) are resolved relative to the config file. The log file rotates at 1 MB.
+- Only one copy of the app can run at a time.
+- The Windows build is now a one-folder PyInstaller app with a windowed `SnapNarrate.exe` and a console `snapnarrate-cli.exe`. Both carry version info, the build uses pinned dependencies in an isolated venv, and an Inno Setup script builds a per-user installer.
+
+### Added
+
+- **Subtitle overlay** (`[hud]`): a click-through caption of the line being spoken.
+- **Local control API** (`[api]`): token-protected HTTP API on `127.0.0.1` plus a Server-Sent Events stream, for widgets such as a future Xbox Game Bar widget, overlays, and scripts.
+- **Addon system:** Python addons through the `snapnarrate.addons` entry point, and a registry for adding vision or speech providers. See `docs/ADDONS.md`.
+- Any setting can be overridden with `SNAPNARRATE_<SECTION>_<KEY>` environment variables.
+- `snapnarrate config path` command. `doctor` now verifies the API keys and that the selected voice exists.
+
+### Removed
+
+- The `install-shortcut` command. The installer creates Start menu and desktop shortcuts.
+- The unused `ollama.continuation_attempts` setting (it is ignored if present) and `requirements.txt`, since `pyproject.toml` is the single source.
+
 ## [0.4.2] - 2026-03-31
 
 ### Added

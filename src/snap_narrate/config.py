@@ -1,13 +1,19 @@
-﻿from __future__ import annotations
+"""Typed configuration backed by a TOML file.
 
+The schema is plain dataclasses. Loading, environment overrides, and saving are all
+driven generically from that schema, so adding a setting means adding one field.
+"""
+
+from __future__ import annotations
+
+import json
 import os
+import threading
 import tomllib
-from dataclasses import dataclass
+from dataclasses import dataclass, field, fields, is_dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, get_type_hints
 
-
-DEFAULT_CONFIG_PATH = Path("config.toml")
 WINDOWS_CAPTURE_SOUND_OPTIONS: dict[str, str] = {
     "Windows Balloon": "Windows Balloon.wav",
     "Windows Camera": "Windows Camera.wav",
@@ -15,8 +21,32 @@ WINDOWS_CAPTURE_SOUND_OPTIONS: dict[str, str] = {
     "Windows Notify": "Windows Notify System Generic.wav",
     "Chimes": "chimes.wav",
     "Tada": "tada.wav",
+    "None": "",
 }
 DEFAULT_CAPTURE_SOUND_NAME = "Windows Balloon"
+
+# Formats the audio player can decode. mp3 goes through libsndfile; pcm_<rate> is raw 16-bit mono.
+SUPPORTED_OUTPUT_FORMATS = [
+    "mp3_44100_128",
+    "mp3_44100_192",
+    "mp3_44100_64",
+    "mp3_22050_32",
+    "pcm_16000",
+    "pcm_22050",
+    "pcm_24000",
+    "pcm_44100",
+]
+
+VISION_PROVIDERS = ["openai", "ollama"]
+CAPTURE_MODES = ["fullscreen", "region"]
+
+
+@dataclass
+class VisionConfig:
+    provider: str = "openai"
+    timeout_sec: int = 60
+    fast_mode: bool = True
+    ultra_fast_mode: bool = True
 
 
 @dataclass
@@ -29,14 +59,6 @@ class OpenAIConfig:
 
 
 @dataclass
-class VisionConfig:
-    provider: str = "openai"
-    timeout_sec: int = 60
-    fast_mode: bool = True
-    ultra_fast_mode: bool = True
-
-
-@dataclass
 class OllamaConfig:
     base_url: str = "http://127.0.0.1:11434"
     model: str = "llava:latest"
@@ -45,7 +67,6 @@ class OllamaConfig:
     num_predict: int = 2048
     temperature: float = 0.1
     top_p: float = 0.9
-    continuation_attempts: int = 1
     min_paragraphs: int = 2
     coverage_retry_attempts: int = 1
 
@@ -54,7 +75,7 @@ class OllamaConfig:
 class ElevenLabsConfig:
     api_key: str = ""
     voice_id: str = ""
-    model_id: str = "eleven_turbo_v2_5"
+    model_id: str = "eleven_multilingual_v2"
     speech_fast_model_id: str = ""
     output_format: str = "mp3_44100_128"
 
@@ -62,9 +83,9 @@ class ElevenLabsConfig:
 @dataclass
 class CaptureConfig:
     hotkey: str = "ctrl+shift+n"
-    mode: str = "fullscreen"
     region_hotkey: str = "ctrl+shift+r"
     stop_hotkey: str = "ctrl+shift+s"
+    mode: str = "fullscreen"
     sound_name: str = DEFAULT_CAPTURE_SOUND_NAME
     cooldown_ms: int = 1500
     min_region_px: int = 64
@@ -96,14 +117,30 @@ class PlaybackConfig:
 
 
 @dataclass
-class DebugConfig:
-    save_screenshots: bool = False
-    screenshot_dir: str = "debug_screenshots"
+class HudConfig:
+    enabled: bool = False
+    position: str = "bottom"
+    font_size: int = 22
+    opacity: float = 0.85
+    linger_ms: int = 1500
 
 
 @dataclass
-class AppBehaviorConfig:
-    run_at_startup: bool = False
+class ApiConfig:
+    enabled: bool = False
+    port: int = 47811
+
+
+@dataclass
+class AddonsConfig:
+    # Names of third-party addons (entry point group "snapnarrate.addons") to load.
+    extra: list[str] = field(default_factory=list)
+
+
+@dataclass
+class DebugConfig:
+    save_screenshots: bool = False
+    screenshot_dir: str = "debug_screenshots"
 
 
 @dataclass
@@ -114,35 +151,119 @@ class UsageConfig:
 
 @dataclass
 class AppConfig:
-    vision: VisionConfig
-    openai: OpenAIConfig
-    ollama: OllamaConfig
-    elevenlabs: ElevenLabsConfig
-    capture: CaptureConfig
-    filter: FilterConfig
-    dedup: DedupConfig
-    playback: PlaybackConfig
-    debug: DebugConfig
-    app: AppBehaviorConfig
-    usage: UsageConfig
     log_file: str = "logs/snapnarrate.log"
+    vision: VisionConfig = field(default_factory=VisionConfig)
+    openai: OpenAIConfig = field(default_factory=OpenAIConfig)
+    ollama: OllamaConfig = field(default_factory=OllamaConfig)
+    elevenlabs: ElevenLabsConfig = field(default_factory=ElevenLabsConfig)
+    capture: CaptureConfig = field(default_factory=CaptureConfig)
+    filter: FilterConfig = field(default_factory=FilterConfig)
+    dedup: DedupConfig = field(default_factory=DedupConfig)
+    playback: PlaybackConfig = field(default_factory=PlaybackConfig)
+    hud: HudConfig = field(default_factory=HudConfig)
+    api: ApiConfig = field(default_factory=ApiConfig)
+    addons: AddonsConfig = field(default_factory=AddonsConfig)
+    debug: DebugConfig = field(default_factory=DebugConfig)
+    usage: UsageConfig = field(default_factory=UsageConfig)
+
+    # Runtime-only bookkeeping, never written to disk.
+    source_path: Path | None = field(default=None, repr=False, compare=False, metadata={"transient": True})
+    env_overrides: dict[str, Any] = field(default_factory=dict, repr=False, compare=False, metadata={"transient": True})
+    warnings: list[str] = field(default_factory=list, repr=False, compare=False, metadata={"transient": True})
+
+    def resolve_path(self, value: str) -> Path:
+        """Relative paths in the config are relative to the config file's folder."""
+        path = Path(value).expanduser()
+        if path.is_absolute() or self.source_path is None:
+            return path
+        return self.source_path.parent / path
+
+    @property
+    def log_path(self) -> Path:
+        return self.resolve_path(self.log_file)
+
+    @property
+    def screenshot_dir(self) -> Path:
+        return self.resolve_path(self.debug.screenshot_dir)
+
+    def get(self, dotted: str) -> Any:
+        target: Any = self
+        for part in dotted.split("."):
+            target = getattr(target, part)
+        return target
+
+    def set(self, dotted: str, value: Any) -> None:
+        *parents, leaf = dotted.split(".")
+        target: Any = self
+        for part in parents:
+            target = getattr(target, part)
+        setattr(target, leaf, value)
 
 
-def _section(data: dict[str, Any], key: str) -> dict[str, Any]:
-    value = data.get(key, {})
-    return value if isinstance(value, dict) else {}
+# Well-known environment variables, in addition to the generic SNAPNARRATE_<SECTION>_<KEY>.
+ENV_ALIASES = {
+    "OPENAI_API_KEY": "openai.api_key",
+    "OPENAI_ADMIN_API_KEY": "openai.admin_api_key",
+    "OPENAI_MODEL": "openai.model",
+    "OPENAI_BASE_URL": "openai.base_url",
+    "ELEVENLABS_API_KEY": "elevenlabs.api_key",
+    "ELEVENLABS_VOICE_ID": "elevenlabs.voice_id",
+    "ELEVENLABS_MODEL_ID": "elevenlabs.model_id",
+    "OLLAMA_BASE_URL": "ollama.base_url",
+    "OLLAMA_MODEL": "ollama.model",
+    "VISION_PROVIDER": "vision.provider",
+}
 
 
-def _env_bool(name: str, default: bool) -> bool:
-    raw = os.getenv(name)
-    if raw is None:
-        return default
-    value = raw.strip().lower()
-    if value in {"1", "true", "yes", "on"}:
-        return True
-    if value in {"0", "false", "no", "off"}:
-        return False
-    return default
+def _is_transient(f: Any) -> bool:
+    return bool(f.metadata.get("transient"))
+
+
+def iter_settings(obj: Any = None, prefix: str = "") -> list[tuple[str, Any]]:
+    """Every (dotted_path, type) pair in the schema, in declaration order."""
+    cls = type(obj) if obj is not None else AppConfig
+    hints = get_type_hints(cls)
+    out: list[tuple[str, Any]] = []
+    for f in fields(cls):
+        if _is_transient(f):
+            continue
+        hint = hints[f.name]
+        path = f"{prefix}{f.name}"
+        if isinstance(hint, type) and is_dataclass(hint):
+            out.extend(iter_settings(hint(), prefix=f"{path}."))
+        else:
+            out.append((path, hint))
+    return out
+
+
+def coerce(value: Any, hint: Any) -> Any:
+    """Convert a raw TOML/env/UI value to the schema type. Raises ValueError on bad input."""
+    if hint is bool:
+        if isinstance(value, bool):
+            return value
+        lowered = str(value).strip().lower()
+        if lowered in {"1", "true", "yes", "on"}:
+            return True
+        if lowered in {"0", "false", "no", "off"}:
+            return False
+        raise ValueError(f"expected true/false, got {value!r}")
+    if hint is int:
+        if isinstance(value, bool):
+            raise ValueError(f"expected integer, got {value!r}")
+        return int(str(value).strip()) if isinstance(value, str) else int(value)
+    if hint is float:
+        return float(value)
+    if hint is str:
+        return str(value)
+    if hint == (float | None):
+        if value is None or (isinstance(value, str) and value.strip() == ""):
+            return None
+        return float(value)
+    if hint == list[str]:
+        if isinstance(value, str):
+            return [part.strip() for part in value.split(",") if part.strip()]
+        return [str(item) for item in value]
+    raise ValueError(f"unsupported setting type {hint!r}")
 
 
 def normalize_capture_sound_name(value: str) -> str:
@@ -150,360 +271,186 @@ def normalize_capture_sound_name(value: str) -> str:
     if name in WINDOWS_CAPTURE_SOUND_OPTIONS:
         return name
     for option_name, filename in WINDOWS_CAPTURE_SOUND_OPTIONS.items():
-        if name.lower() == filename.lower():
+        if filename and name.lower() == filename.lower():
             return option_name
     return DEFAULT_CAPTURE_SOUND_NAME
 
 
-def load_config(path: Path) -> AppConfig:
-    content: dict[str, Any] = {}
-    if path.exists():
-        with path.open("rb") as f:
-            content = tomllib.load(f)
+def _normalize(cfg: AppConfig) -> None:
+    def pick(value: str, allowed: list[str], default: str, name: str) -> str:
+        cleaned = value.strip().lower()
+        if cleaned in allowed:
+            return cleaned
+        cfg.warnings.append(f"{name}: {value!r} is not one of {allowed}; using {default!r}")
+        return default
 
-    openai_data = _section(content, "openai")
-    vision_data = _section(content, "vision")
-    ollama_data = _section(content, "ollama")
-    eleven_data = _section(content, "elevenlabs")
-    capture_data = _section(content, "capture")
-    filter_data = _section(content, "filter")
-    dedup_data = _section(content, "dedup")
-    playback_data = _section(content, "playback")
-    debug_data = _section(content, "debug")
-    app_data = _section(content, "app")
-    usage_data = _section(content, "usage")
-
-    raw_budget = usage_data.get("openai_monthly_budget_usd", None)
-    budget_value: float | None
-    if raw_budget in (None, ""):
-        budget_value = None
-    else:
-        budget_value = float(raw_budget)
-
-    cfg = AppConfig(
-        vision=VisionConfig(
-            provider=str(vision_data.get("provider", VisionConfig.provider)),
-            timeout_sec=int(vision_data.get("timeout_sec", VisionConfig.timeout_sec)),
-            fast_mode=bool(vision_data.get("fast_mode", VisionConfig.fast_mode)),
-            ultra_fast_mode=bool(vision_data.get("ultra_fast_mode", VisionConfig.ultra_fast_mode)),
-        ),
-        openai=OpenAIConfig(
-            api_key=str(openai_data.get("api_key", "")),
-            admin_api_key=str(openai_data.get("admin_api_key", "")),
-            model=str(openai_data.get("model", OpenAIConfig.model)),
-            ultra_fast_model=str(openai_data.get("ultra_fast_model", OpenAIConfig.ultra_fast_model)),
-            base_url=str(openai_data.get("base_url", OpenAIConfig.base_url)),
-        ),
-        ollama=OllamaConfig(
-            base_url=str(ollama_data.get("base_url", OllamaConfig.base_url)),
-            model=str(ollama_data.get("model", OllamaConfig.model)),
-            ultra_fast_model=str(ollama_data.get("ultra_fast_model", OllamaConfig.ultra_fast_model)),
-            keep_alive=str(ollama_data.get("keep_alive", OllamaConfig.keep_alive)),
-            num_predict=int(ollama_data.get("num_predict", OllamaConfig.num_predict)),
-            temperature=float(ollama_data.get("temperature", OllamaConfig.temperature)),
-            top_p=float(ollama_data.get("top_p", OllamaConfig.top_p)),
-            continuation_attempts=int(ollama_data.get("continuation_attempts", OllamaConfig.continuation_attempts)),
-            min_paragraphs=int(ollama_data.get("min_paragraphs", OllamaConfig.min_paragraphs)),
-            coverage_retry_attempts=int(
-                ollama_data.get("coverage_retry_attempts", OllamaConfig.coverage_retry_attempts)
-            ),
-        ),
-        elevenlabs=ElevenLabsConfig(
-            api_key=str(eleven_data.get("api_key", "")),
-            voice_id=str(eleven_data.get("voice_id", "")),
-            model_id=str(eleven_data.get("model_id", ElevenLabsConfig.model_id)),
-            speech_fast_model_id=str(
-                eleven_data.get("speech_fast_model_id", ElevenLabsConfig.speech_fast_model_id)
-            ),
-            output_format=str(eleven_data.get("output_format", ElevenLabsConfig.output_format)),
-        ),
-        capture=CaptureConfig(
-            hotkey=str(capture_data.get("hotkey", CaptureConfig.hotkey)),
-            mode=str(capture_data.get("mode", CaptureConfig.mode)).strip().lower(),
-            region_hotkey=str(capture_data.get("region_hotkey", CaptureConfig.region_hotkey)),
-            stop_hotkey=str(capture_data.get("stop_hotkey", CaptureConfig.stop_hotkey)),
-            sound_name=normalize_capture_sound_name(
-                str(capture_data.get("sound_name", CaptureConfig.sound_name))
-            ),
-            cooldown_ms=int(capture_data.get("cooldown_ms", CaptureConfig.cooldown_ms)),
-            min_region_px=int(capture_data.get("min_region_px", CaptureConfig.min_region_px)),
-            max_dimension=int(capture_data.get("max_dimension", CaptureConfig.max_dimension)),
-            image_format=str(capture_data.get("image_format", CaptureConfig.image_format)).strip().lower(),
-            jpeg_quality=int(capture_data.get("jpeg_quality", CaptureConfig.jpeg_quality)),
-        ),
-        filter=FilterConfig(
-            min_block_chars=int(filter_data.get("min_block_chars", FilterConfig.min_block_chars)),
-            ignore_short_lines=int(filter_data.get("ignore_short_lines", FilterConfig.ignore_short_lines)),
-        ),
-        dedup=DedupConfig(
-            enabled=bool(dedup_data.get("enabled", DedupConfig.enabled)),
-            similarity_threshold=float(dedup_data.get("similarity_threshold", DedupConfig.similarity_threshold)),
-        ),
-        playback=PlaybackConfig(
-            retry_count=int(playback_data.get("retry_count", PlaybackConfig.retry_count)),
-            retry_backoff_ms=int(playback_data.get("retry_backoff_ms", PlaybackConfig.retry_backoff_ms)),
-            speech_first_enabled=bool(
-                playback_data.get("speech_first_enabled", PlaybackConfig.speech_first_enabled)
-            ),
-            initial_chunk_chars=int(playback_data.get("initial_chunk_chars", PlaybackConfig.initial_chunk_chars)),
-            followup_chunk_chars=int(playback_data.get("followup_chunk_chars", PlaybackConfig.followup_chunk_chars)),
-            followup_min_chars=int(playback_data.get("followup_min_chars", PlaybackConfig.followup_min_chars)),
-        ),
-        debug=DebugConfig(
-            save_screenshots=bool(debug_data.get("save_screenshots", DebugConfig.save_screenshots)),
-            screenshot_dir=str(debug_data.get("screenshot_dir", DebugConfig.screenshot_dir)),
-        ),
-        app=AppBehaviorConfig(
-            run_at_startup=bool(app_data.get("run_at_startup", AppBehaviorConfig.run_at_startup)),
-        ),
-        usage=UsageConfig(
-            openai_monthly_budget_usd=budget_value,
-            cache_seconds=int(usage_data.get("cache_seconds", UsageConfig.cache_seconds)),
-        ),
-        log_file=str(content.get("log_file", "logs/snapnarrate.log")),
-    )
-
-    cfg.openai.api_key = os.getenv("OPENAI_API_KEY", cfg.openai.api_key)
-    cfg.openai.admin_api_key = os.getenv("OPENAI_ADMIN_API_KEY", cfg.openai.admin_api_key)
-    cfg.openai.model = os.getenv("OPENAI_MODEL", cfg.openai.model)
-    cfg.openai.ultra_fast_model = os.getenv("OPENAI_ULTRA_FAST_MODEL", cfg.openai.ultra_fast_model)
-    cfg.openai.base_url = os.getenv("OPENAI_BASE_URL", cfg.openai.base_url)
-
-    cfg.vision.provider = os.getenv("VISION_PROVIDER", cfg.vision.provider)
-    cfg.vision.fast_mode = _env_bool("VISION_FAST_MODE", cfg.vision.fast_mode)
-    cfg.vision.ultra_fast_mode = _env_bool("VISION_ULTRA_FAST_MODE", cfg.vision.ultra_fast_mode)
-    if cfg.capture.mode not in {"fullscreen", "region"}:
-        cfg.capture.mode = "fullscreen"
-
-    cfg.elevenlabs.api_key = os.getenv("ELEVENLABS_API_KEY", cfg.elevenlabs.api_key)
-    cfg.elevenlabs.voice_id = os.getenv("ELEVENLABS_VOICE_ID", cfg.elevenlabs.voice_id)
-    cfg.elevenlabs.model_id = os.getenv("ELEVENLABS_MODEL_ID", cfg.elevenlabs.model_id)
-    cfg.elevenlabs.speech_fast_model_id = os.getenv(
-        "ELEVENLABS_SPEECH_FAST_MODEL_ID", cfg.elevenlabs.speech_fast_model_id
-    )
-    cfg.elevenlabs.output_format = os.getenv("ELEVENLABS_OUTPUT_FORMAT", cfg.elevenlabs.output_format)
-
-    hotkey = os.getenv("SNAPNARRATE_HOTKEY")
-    if hotkey:
-        cfg.capture.hotkey = hotkey
-    stop_hotkey = os.getenv("SNAPNARRATE_STOP_HOTKEY")
-    if stop_hotkey:
-        cfg.capture.stop_hotkey = stop_hotkey
-    cfg.capture.max_dimension = int(os.getenv("SNAPNARRATE_CAPTURE_MAX_DIMENSION", str(cfg.capture.max_dimension)))
-    image_format = os.getenv("SNAPNARRATE_CAPTURE_IMAGE_FORMAT")
-    if image_format:
-        cfg.capture.image_format = image_format.strip().lower()
-    cfg.capture.jpeg_quality = int(os.getenv("SNAPNARRATE_CAPTURE_JPEG_QUALITY", str(cfg.capture.jpeg_quality)))
-    cfg.ollama.base_url = os.getenv("OLLAMA_BASE_URL", cfg.ollama.base_url)
-    cfg.ollama.model = os.getenv("OLLAMA_MODEL", cfg.ollama.model)
-    cfg.ollama.ultra_fast_model = os.getenv("OLLAMA_ULTRA_FAST_MODEL", cfg.ollama.ultra_fast_model)
-    cfg.ollama.keep_alive = os.getenv("OLLAMA_KEEP_ALIVE", cfg.ollama.keep_alive)
-    cfg.ollama.num_predict = int(os.getenv("OLLAMA_NUM_PREDICT", str(cfg.ollama.num_predict)))
-    cfg.ollama.temperature = float(os.getenv("OLLAMA_TEMPERATURE", str(cfg.ollama.temperature)))
-    cfg.ollama.top_p = float(os.getenv("OLLAMA_TOP_P", str(cfg.ollama.top_p)))
-    cfg.ollama.continuation_attempts = int(
-        os.getenv("OLLAMA_CONTINUATION_ATTEMPTS", str(cfg.ollama.continuation_attempts))
-    )
-    cfg.ollama.min_paragraphs = int(os.getenv("OLLAMA_MIN_PARAGRAPHS", str(cfg.ollama.min_paragraphs)))
-    cfg.ollama.coverage_retry_attempts = int(
-        os.getenv("OLLAMA_COVERAGE_RETRY_ATTEMPTS", str(cfg.ollama.coverage_retry_attempts))
-    )
-    raw_budget_env = os.getenv("OPENAI_MONTHLY_BUDGET_USD")
-    if raw_budget_env is not None and raw_budget_env.strip() != "":
-        cfg.usage.openai_monthly_budget_usd = float(raw_budget_env)
-    cfg.usage.cache_seconds = int(os.getenv("USAGE_CACHE_SECONDS", str(cfg.usage.cache_seconds)))
-    cfg.playback.speech_first_enabled = _env_bool(
-        "SNAPNARRATE_SPEECH_FIRST_ENABLED", cfg.playback.speech_first_enabled
-    )
-    cfg.playback.initial_chunk_chars = int(
-        os.getenv("SNAPNARRATE_INITIAL_CHUNK_CHARS", str(cfg.playback.initial_chunk_chars))
-    )
-    cfg.playback.followup_chunk_chars = int(
-        os.getenv("SNAPNARRATE_FOLLOWUP_CHUNK_CHARS", str(cfg.playback.followup_chunk_chars))
-    )
-    cfg.playback.followup_min_chars = int(
-        os.getenv("SNAPNARRATE_FOLLOWUP_MIN_CHARS", str(cfg.playback.followup_min_chars))
-    )
-
-    if cfg.capture.image_format == "jpg":
+    # Not restricted to VISION_PROVIDERS: addons may register more providers.
+    cfg.vision.provider = cfg.vision.provider.strip().lower() or "openai"
+    cfg.capture.mode = pick(cfg.capture.mode, CAPTURE_MODES, "fullscreen", "capture.mode")
+    if cfg.capture.image_format.strip().lower() == "jpg":
         cfg.capture.image_format = "jpeg"
-    if cfg.capture.image_format not in {"png", "jpeg"}:
-        cfg.capture.image_format = CaptureConfig.image_format
+    cfg.capture.image_format = pick(cfg.capture.image_format, ["jpeg", "png"], "jpeg", "capture.image_format")
     cfg.capture.sound_name = normalize_capture_sound_name(cfg.capture.sound_name)
+    cfg.elevenlabs.output_format = pick(
+        cfg.elevenlabs.output_format, SUPPORTED_OUTPUT_FORMATS, "mp3_44100_128", "elevenlabs.output_format"
+    )
+    cfg.hud.position = pick(cfg.hud.position, ["top", "bottom"], "bottom", "hud.position")
+
+    cfg.vision.timeout_sec = max(cfg.vision.timeout_sec, 5)
     cfg.capture.max_dimension = max(cfg.capture.max_dimension, 0)
     cfg.capture.jpeg_quality = min(max(cfg.capture.jpeg_quality, 1), 100)
+    cfg.capture.min_region_px = max(cfg.capture.min_region_px, 8)
+    cfg.capture.cooldown_ms = max(cfg.capture.cooldown_ms, 0)
+    cfg.dedup.similarity_threshold = min(max(cfg.dedup.similarity_threshold, 0.0), 1.0)
+    cfg.playback.retry_count = max(cfg.playback.retry_count, 0)
     cfg.playback.initial_chunk_chars = max(cfg.playback.initial_chunk_chars, 80)
     cfg.playback.followup_chunk_chars = max(cfg.playback.followup_chunk_chars, cfg.playback.initial_chunk_chars)
     cfg.playback.followup_min_chars = max(cfg.playback.followup_min_chars, 20)
+    cfg.hud.font_size = min(max(cfg.hud.font_size, 10), 72)
+    cfg.hud.opacity = min(max(cfg.hud.opacity, 0.2), 1.0)
+    if not 1024 <= cfg.api.port <= 65535:
+        cfg.warnings.append(f"api.port: {cfg.api.port} out of range; using 47811")
+        cfg.api.port = 47811
 
+
+def _env_overrides(environ: dict[str, str]) -> dict[str, str]:
+    known = {path for path, _ in iter_settings()}
+    found: dict[str, str] = {}
+    for name, path in ENV_ALIASES.items():
+        if environ.get(name):
+            found[path] = environ[name]
+    for path in known:
+        env_name = "SNAPNARRATE_" + path.replace(".", "_").upper()
+        if env_name in environ:
+            found[path] = environ[env_name]
+    return found
+
+
+def load_config(path: Path, environ: dict[str, str] | None = None) -> AppConfig:
+    cfg = AppConfig(source_path=path)
+    raw: dict[str, Any] = {}
+    if path.exists():
+        with path.open("rb") as handle:
+            raw = tomllib.load(handle)
+
+    for dotted, hint in iter_settings():
+        section, _, key = dotted.rpartition(".")
+        container = raw.get(section, {}) if section else raw
+        if not isinstance(container, dict) or key not in container:
+            continue
+        try:
+            cfg.set(dotted, coerce(container[key], hint))
+        except (TypeError, ValueError) as exc:
+            cfg.warnings.append(f"{dotted}: {exc}; using default")
+
+    hints = dict(iter_settings())
+    for dotted, value in _env_overrides(dict(os.environ) if environ is None else environ).items():
+        try:
+            file_value = cfg.get(dotted)
+            cfg.set(dotted, coerce(value, hints[dotted]))
+            cfg.env_overrides[dotted] = file_value
+        except (TypeError, ValueError) as exc:
+            cfg.warnings.append(f"environment override for {dotted}: {exc}")
+
+    _normalize(cfg)
     return cfg
+
+
+def _toml_value(value: Any) -> str:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)):
+        return repr(value)
+    if isinstance(value, list):
+        return "[" + ", ".join(_toml_value(item) for item in value) + "]"
+    # JSON string escapes are a valid subset of TOML basic-string escapes.
+    return json.dumps(str(value), ensure_ascii=False)
+
+
+def dumps_config(cfg: AppConfig) -> str:
+    """Serialize to TOML. Values that came from environment variables are written as the
+    file's original value so secrets supplied via env never land on disk."""
+    sections: dict[str, list[str]] = {"": []}
+    for dotted, _ in iter_settings():
+        value = cfg.env_overrides.get(dotted, cfg.get(dotted))
+        if value is None:
+            continue
+        section, _, key = dotted.rpartition(".")
+        sections.setdefault(section, []).append(f"{key} = {_toml_value(value)}")
+
+    parts = ["# SnapNarrate configuration. Relative paths are relative to this file.\n"]
+    parts.extend(line + "\n" for line in sections.pop(""))
+    for section, lines in sections.items():
+        parts.append(f"\n[{section}]\n")
+        parts.extend(line + "\n" for line in lines)
+    return "".join(parts)
+
+
+def save_config(path: Path, cfg: AppConfig) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(dumps_config(cfg), encoding="utf-8")
+    os.replace(tmp, path)
 
 
 def init_config(path: Path, force: bool = False) -> Path:
     if path.exists() and not force:
         raise FileExistsError(f"Config already exists: {path}")
-
-    template = """# SnapNarrate v2 config
-log_file = "logs/snapnarrate.log"
-
-[vision]
-provider = "openai"
-timeout_sec = 60
-fast_mode = true
-ultra_fast_mode = true
-
-[openai]
-api_key = ""
-admin_api_key = ""
-model = "gpt-4.1-mini"
-ultra_fast_model = ""
-base_url = "https://api.openai.com"
-
-[ollama]
-base_url = "http://127.0.0.1:11434"
-model = "llava:latest"
-ultra_fast_model = ""
-keep_alive = "5m"
-num_predict = 2048
-temperature = 0.1
-top_p = 0.9
-continuation_attempts = 1
-min_paragraphs = 2
-coverage_retry_attempts = 1
-
-[elevenlabs]
-api_key = ""
-voice_id = ""
-model_id = "eleven_turbo_v2_5"
-speech_fast_model_id = ""
-output_format = "mp3_44100_128"
-
-[capture]
-hotkey = "ctrl+shift+n"
-mode = "fullscreen"
-region_hotkey = "ctrl+shift+r"
-stop_hotkey = "ctrl+shift+s"
-sound_name = "Windows Balloon"
-cooldown_ms = 1500
-min_region_px = 64
-max_dimension = 1600
-image_format = "jpeg"
-jpeg_quality = 85
-
-[filter]
-min_block_chars = 140
-ignore_short_lines = 4
-
-[dedup]
-enabled = true
-similarity_threshold = 0.95
-
-[playback]
-retry_count = 2
-retry_backoff_ms = 700
-speech_first_enabled = true
-initial_chunk_chars = 220
-followup_chunk_chars = 650
-followup_min_chars = 60
-
-[debug]
-save_screenshots = false
-screenshot_dir = "debug_screenshots"
-
-[app]
-run_at_startup = false
-
-[usage]
-openai_monthly_budget_usd = ""
-cache_seconds = 60
-"""
-    path.write_text(template, encoding="utf-8")
+    save_config(path, AppConfig(source_path=path))
     return path
 
 
-def _toml_str(value: str) -> str:
-    escaped = value.replace("\\", "\\\\").replace('"', '\\"')
-    return f"\"{escaped}\""
+def missing_required(cfg: AppConfig) -> list[str]:
+    missing: list[str] = []
+    if not cfg.elevenlabs.api_key:
+        missing.append("ElevenLabs API key")
+    if not cfg.elevenlabs.voice_id:
+        missing.append("ElevenLabs voice")
+    if cfg.vision.provider == "openai" and not cfg.openai.api_key:
+        missing.append("OpenAI API key")
+    if cfg.vision.provider == "ollama" and not cfg.ollama.model:
+        missing.append("Ollama model")
+    return missing
 
 
-def render_config(cfg: AppConfig) -> str:
-    return f"""# SnapNarrate v2 config
-log_file = {_toml_str(cfg.log_file)}
+class ConfigStore:
+    """Owns the config file. Tracks its own writes so they are not mistaken for external edits."""
 
-[vision]
-provider = {_toml_str(cfg.vision.provider)}
-timeout_sec = {cfg.vision.timeout_sec}
-fast_mode = {"true" if cfg.vision.fast_mode else "false"}
-ultra_fast_mode = {"true" if cfg.vision.ultra_fast_mode else "false"}
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        self._lock = threading.Lock()
+        self._known_mtime: float | None = None
 
-[openai]
-api_key = {_toml_str(cfg.openai.api_key)}
-admin_api_key = {_toml_str(cfg.openai.admin_api_key)}
-model = {_toml_str(cfg.openai.model)}
-ultra_fast_model = {_toml_str(cfg.openai.ultra_fast_model)}
-base_url = {_toml_str(cfg.openai.base_url)}
+    def _mtime(self) -> float | None:
+        try:
+            return self.path.stat().st_mtime
+        except OSError:
+            return None
 
-[ollama]
-base_url = {_toml_str(cfg.ollama.base_url)}
-model = {_toml_str(cfg.ollama.model)}
-ultra_fast_model = {_toml_str(cfg.ollama.ultra_fast_model)}
-keep_alive = {_toml_str(cfg.ollama.keep_alive)}
-num_predict = {cfg.ollama.num_predict}
-temperature = {cfg.ollama.temperature}
-top_p = {cfg.ollama.top_p}
-continuation_attempts = {cfg.ollama.continuation_attempts}
-min_paragraphs = {cfg.ollama.min_paragraphs}
-coverage_retry_attempts = {cfg.ollama.coverage_retry_attempts}
+    def ensure_exists(self) -> None:
+        if not self.path.exists():
+            init_config(self.path)
 
-[elevenlabs]
-api_key = {_toml_str(cfg.elevenlabs.api_key)}
-voice_id = {_toml_str(cfg.elevenlabs.voice_id)}
-model_id = {_toml_str(cfg.elevenlabs.model_id)}
-speech_fast_model_id = {_toml_str(cfg.elevenlabs.speech_fast_model_id)}
-output_format = {_toml_str(cfg.elevenlabs.output_format)}
+    def load(self) -> AppConfig:
+        with self._lock:
+            cfg = load_config(self.path)
+            self._known_mtime = self._mtime()
+            return cfg
 
-[capture]
-hotkey = {_toml_str(cfg.capture.hotkey)}
-mode = {_toml_str(cfg.capture.mode)}
-region_hotkey = {_toml_str(cfg.capture.region_hotkey)}
-stop_hotkey = {_toml_str(cfg.capture.stop_hotkey)}
-sound_name = {_toml_str(cfg.capture.sound_name)}
-cooldown_ms = {cfg.capture.cooldown_ms}
-min_region_px = {cfg.capture.min_region_px}
-max_dimension = {cfg.capture.max_dimension}
-image_format = {_toml_str(cfg.capture.image_format)}
-jpeg_quality = {cfg.capture.jpeg_quality}
+    def save(self, cfg: AppConfig) -> None:
+        with self._lock:
+            save_config(self.path, cfg)
+            self._known_mtime = self._mtime()
 
-[filter]
-min_block_chars = {cfg.filter.min_block_chars}
-ignore_short_lines = {cfg.filter.ignore_short_lines}
+    def update(self, changes: dict[str, Any]) -> AppConfig:
+        """Load, apply {dotted.path: value} changes, save. Returns the saved config."""
+        cfg = self.load()
+        for dotted, value in changes.items():
+            cfg.set(dotted, value)
+        self.save(cfg)
+        return cfg
 
-[dedup]
-enabled = {"true" if cfg.dedup.enabled else "false"}
-similarity_threshold = {cfg.dedup.similarity_threshold}
-
-[playback]
-retry_count = {cfg.playback.retry_count}
-retry_backoff_ms = {cfg.playback.retry_backoff_ms}
-speech_first_enabled = {"true" if cfg.playback.speech_first_enabled else "false"}
-initial_chunk_chars = {cfg.playback.initial_chunk_chars}
-followup_chunk_chars = {cfg.playback.followup_chunk_chars}
-followup_min_chars = {cfg.playback.followup_min_chars}
-
-[debug]
-save_screenshots = {"true" if cfg.debug.save_screenshots else "false"}
-screenshot_dir = {_toml_str(cfg.debug.screenshot_dir)}
-
-[app]
-run_at_startup = {"true" if cfg.app.run_at_startup else "false"}
-
-[usage]
-openai_monthly_budget_usd = {"\"\"" if cfg.usage.openai_monthly_budget_usd is None else cfg.usage.openai_monthly_budget_usd}
-cache_seconds = {cfg.usage.cache_seconds}
-"""
-
-
-def save_config(path: Path, cfg: AppConfig) -> Path:
-    path.write_text(render_config(cfg), encoding="utf-8")
-    return path
-
+    def changed_on_disk(self) -> bool:
+        with self._lock:
+            current = self._mtime()
+            return current is not None and current != self._known_mtime

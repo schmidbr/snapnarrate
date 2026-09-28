@@ -4,6 +4,7 @@ __pycache__/
 *.pyo
 *.pyd
 .venv/
+.venv-build/
 venv/
 .pytest_cache/
 
@@ -11,7 +12,8 @@ venv/
 build/
 dist/
 *.egg-info/
-*.spec
+# Stray root-level specs from ad-hoc PyInstaller runs (packaging/snapnarrate.spec is tracked)
+/*.spec
 
 # Runtime output
 logs/

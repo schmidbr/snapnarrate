@@ -1,130 +1,82 @@
-﻿from __future__ import annotations
-
+import tomllib
 from pathlib import Path
 
-from snap_narrate.config import load_config, save_config
+from snap_narrate.config import AppConfig, ConfigStore, dumps_config, init_config, load_config, missing_required
 
 
-def test_load_config_reads_stop_hotkey(tmp_path: Path) -> None:
-    config_path = tmp_path / "config.toml"
-    config_path.write_text(
-        """
-[capture]
-hotkey = "ctrl+shift+n"
-stop_hotkey = "ctrl+shift+x"
-cooldown_ms = 1500
-""".strip(),
+def test_defaults_round_trip(tmp_path: Path) -> None:
+    path = init_config(tmp_path / "config.toml")
+    cfg = load_config(path, environ={})
+    assert cfg.warnings == []
+    assert cfg.vision.provider == "openai"
+    assert cfg.usage.openai_monthly_budget_usd is None
+    assert dumps_config(cfg) == dumps_config(AppConfig())
+
+
+def test_output_is_valid_toml_with_awkward_strings(tmp_path: Path) -> None:
+    cfg = AppConfig()
+    cfg.openai.api_key = 'sk-"quoted"\\back\nline'
+    cfg.addons.extra = ["one", "two"]
+    parsed = tomllib.loads(dumps_config(cfg))
+    assert parsed["openai"]["api_key"] == cfg.openai.api_key
+    assert parsed["addons"]["extra"] == ["one", "two"]
+
+
+def test_legacy_config_loads(tmp_path: Path) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text(
+        '[capture]\nhotkey = "ctrl+alt+n"\nmode = "REGION"\nimage_format = "jpg"\n'
+        '[ollama]\ncontinuation_attempts = 1\n[usage]\nopenai_monthly_budget_usd = ""\n[app]\nrun_at_startup = true\n',
         encoding="utf-8",
     )
-
-    cfg = load_config(config_path)
-    assert cfg.capture.hotkey == "ctrl+shift+n"
-    assert cfg.capture.stop_hotkey == "ctrl+shift+x"
-
-
-def test_load_config_normalizes_capture_sound_name(tmp_path: Path) -> None:
-    config_path = tmp_path / "config.toml"
-    config_path.write_text(
-        """
-[capture]
-sound_name = "Windows Ding.wav"
-""".strip(),
-        encoding="utf-8",
-    )
-
-    cfg = load_config(config_path)
-    assert cfg.capture.sound_name == "Windows Ding"
+    cfg = load_config(path, environ={})
+    assert cfg.capture.hotkey == "ctrl+alt+n"
+    assert cfg.capture.mode == "region"
+    assert cfg.capture.image_format == "jpeg"
+    assert cfg.usage.openai_monthly_budget_usd is None
 
 
-def test_save_config_round_trip(tmp_path: Path) -> None:
-    config_path = tmp_path / "config.toml"
-    cfg = load_config(config_path)
-    cfg.vision.provider = "ollama"
-    cfg.vision.timeout_sec = 45
-    cfg.vision.fast_mode = False
-    cfg.vision.ultra_fast_mode = False
-    cfg.openai.api_key = "k1"
-    cfg.openai.admin_api_key = "k1-admin"
-    cfg.openai.ultra_fast_model = "gpt-4.1-nano"
-    cfg.openai.base_url = "https://api.openai.com"
-    cfg.ollama.base_url = "http://127.0.0.1:11434"
-    cfg.ollama.model = "llava:latest"
-    cfg.ollama.ultra_fast_model = "llava-fast:latest"
-    cfg.ollama.num_predict = 2400
-    cfg.ollama.temperature = 0.1
-    cfg.ollama.top_p = 0.9
-    cfg.ollama.continuation_attempts = 1
-    cfg.ollama.min_paragraphs = 2
-    cfg.ollama.coverage_retry_attempts = 1
-    cfg.elevenlabs.api_key = "k2"
-    cfg.elevenlabs.voice_id = "voice-123"
-    cfg.elevenlabs.speech_fast_model_id = "eleven_flash_v2"
-    cfg.capture.hotkey = "ctrl+shift+n"
-    cfg.capture.mode = "region"
-    cfg.capture.region_hotkey = "ctrl+shift+r"
-    cfg.capture.stop_hotkey = "ctrl+shift+s"
-    cfg.capture.sound_name = "Chimes"
-    cfg.capture.cooldown_ms = 1800
-    cfg.capture.min_region_px = 96
-    cfg.capture.max_dimension = 1200
-    cfg.capture.image_format = "png"
-    cfg.capture.jpeg_quality = 92
-    cfg.filter.min_block_chars = 160
-    cfg.dedup.similarity_threshold = 0.9
-    cfg.playback.retry_count = 3
-    cfg.playback.speech_first_enabled = False
-    cfg.playback.initial_chunk_chars = 180
-    cfg.playback.followup_chunk_chars = 520
-    cfg.playback.followup_min_chars = 55
-    cfg.debug.save_screenshots = True
-    cfg.log_file = "logs/custom.log"
-    cfg.app.run_at_startup = True
-    cfg.usage.openai_monthly_budget_usd = 12.5
-    cfg.usage.cache_seconds = 42
+def test_bad_values_fall_back_with_warnings(tmp_path: Path) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text('[capture]\ncooldown_ms = "soon"\n[elevenlabs]\noutput_format = "ulaw_8000"\n', encoding="utf-8")
+    cfg = load_config(path, environ={})
+    assert cfg.capture.cooldown_ms == 1500
+    assert cfg.elevenlabs.output_format == "mp3_44100_128"
+    assert len(cfg.warnings) == 2
 
-    save_config(config_path, cfg)
-    loaded = load_config(config_path)
 
-    assert loaded.vision.provider == "ollama"
-    assert loaded.vision.timeout_sec == 45
-    assert loaded.vision.fast_mode is False
-    assert loaded.vision.ultra_fast_mode is False
-    assert loaded.openai.api_key == "k1"
-    assert loaded.openai.admin_api_key == "k1-admin"
-    assert loaded.openai.ultra_fast_model == "gpt-4.1-nano"
-    assert loaded.openai.base_url == "https://api.openai.com"
-    assert loaded.ollama.base_url == "http://127.0.0.1:11434"
-    assert loaded.ollama.model == "llava:latest"
-    assert loaded.ollama.ultra_fast_model == "llava-fast:latest"
-    assert loaded.ollama.num_predict == 2400
-    assert loaded.ollama.temperature == 0.1
-    assert loaded.ollama.top_p == 0.9
-    assert loaded.ollama.continuation_attempts == 1
-    assert loaded.ollama.min_paragraphs == 2
-    assert loaded.ollama.coverage_retry_attempts == 1
-    assert loaded.elevenlabs.api_key == "k2"
-    assert loaded.elevenlabs.voice_id == "voice-123"
-    assert loaded.elevenlabs.speech_fast_model_id == "eleven_flash_v2"
-    assert loaded.capture.hotkey == "ctrl+shift+n"
-    assert loaded.capture.mode == "region"
-    assert loaded.capture.region_hotkey == "ctrl+shift+r"
-    assert loaded.capture.stop_hotkey == "ctrl+shift+s"
-    assert loaded.capture.sound_name == "Chimes"
-    assert loaded.capture.cooldown_ms == 1800
-    assert loaded.capture.min_region_px == 96
-    assert loaded.capture.max_dimension == 1200
-    assert loaded.capture.image_format == "png"
-    assert loaded.capture.jpeg_quality == 92
-    assert loaded.filter.min_block_chars == 160
-    assert loaded.dedup.similarity_threshold == 0.9
-    assert loaded.playback.retry_count == 3
-    assert loaded.playback.speech_first_enabled is False
-    assert loaded.playback.initial_chunk_chars == 180
-    assert loaded.playback.followup_chunk_chars == 520
-    assert loaded.playback.followup_min_chars == 55
-    assert loaded.debug.save_screenshots is True
-    assert loaded.log_file == "logs/custom.log"
-    assert loaded.app.run_at_startup is True
-    assert loaded.usage.openai_monthly_budget_usd == 12.5
-    assert loaded.usage.cache_seconds == 42
+def test_env_secrets_are_used_but_never_saved(tmp_path: Path) -> None:
+    path = init_config(tmp_path / "config.toml")
+    env = {"OPENAI_API_KEY": "sk-from-env", "SNAPNARRATE_CAPTURE_COOLDOWN_MS": "10"}
+    cfg = load_config(path, environ=env)
+    assert cfg.openai.api_key == "sk-from-env"
+    assert cfg.capture.cooldown_ms == 10
 
+    cfg.capture.hotkey = "ctrl+alt+x"
+    path.write_text(dumps_config(cfg), encoding="utf-8")
+    saved = tomllib.loads(path.read_text(encoding="utf-8"))
+    assert saved["openai"]["api_key"] == ""
+    assert saved["capture"]["cooldown_ms"] == 1500
+    assert saved["capture"]["hotkey"] == "ctrl+alt+x"
+
+
+def test_relative_paths_resolve_against_config_folder(tmp_path: Path) -> None:
+    cfg = load_config(init_config(tmp_path / "cfg" / "config.toml"), environ={})
+    assert cfg.log_path == tmp_path / "cfg" / "logs" / "snapnarrate.log"
+
+
+def test_store_ignores_its_own_writes(tmp_path: Path) -> None:
+    store = ConfigStore(tmp_path / "config.toml")
+    store.ensure_exists()
+    store.load()
+    assert not store.changed_on_disk()
+    store.update({"capture.mode": "region"})
+    assert not store.changed_on_disk()
+    assert store.load().capture.mode == "region"
+
+
+def test_missing_required() -> None:
+    cfg = AppConfig()
+    assert "OpenAI API key" in missing_required(cfg)
+    cfg.openai.api_key, cfg.elevenlabs.api_key, cfg.elevenlabs.voice_id = "a", "b", "c"
+    assert missing_required(cfg) == []

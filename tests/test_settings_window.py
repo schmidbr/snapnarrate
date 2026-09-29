@@ -130,3 +130,14 @@ def test_switching_provider_rebuilds_reading_page(window) -> None:  # noqa: ANN0
     pump(window)
     assert window._pages["reading"] is not first
     assert "ollama_cloud.api_key" in window.titles  # the cloud fields are now on the page
+
+
+def test_saving_keeps_lists_as_lists(window) -> None:  # noqa: ANN001
+    """Regression: saving with no addons stored the text "[]" as an addon name."""
+    assert window.var("addons.extra").get() == ""
+    window.var("hud.font_size").set("30")
+    assert window.save()
+    assert window.store.load().addons.extra == []
+    window.var("addons.extra").set("chat_log, other")
+    assert window.save()
+    assert window.store.load().addons.extra == ["chat_log", "other"]

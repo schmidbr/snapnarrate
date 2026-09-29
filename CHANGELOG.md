@@ -4,6 +4,12 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-09-28
+
+### Fixed
+
+- Saving in the new window no longer shows "No installed addon named '[]'". The empty addon list was saved as the text `[]`. Configs affected by this are cleaned up automatically when loaded.
+
 ## [0.6.0] - 2026-09-28
 
 A redesigned app window, and volume control for narration.

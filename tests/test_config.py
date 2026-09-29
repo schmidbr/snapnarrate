@@ -92,3 +92,12 @@ def test_ollama_cloud_needs_key_and_env_key_is_not_saved(tmp_path: Path) -> None
     loaded = load_config(path, environ={"OLLAMA_API_KEY": "oc-env"})
     assert loaded.ollama_cloud.api_key == "oc-env"
     assert tomllib.loads(dumps_config(loaded))["ollama_cloud"]["api_key"] == ""
+
+
+def test_invalid_addon_names_are_dropped(tmp_path: Path) -> None:
+    """0.6.0's window saved an empty addon list as ["[]"]; loading must heal that."""
+    path = tmp_path / "config.toml"
+    path.write_text('[addons]\nextra = ["[]", "chat_log"]\n', encoding="utf-8")
+    cfg = load_config(path, environ={})
+    assert cfg.addons.extra == ["chat_log"]
+    assert any("[]" in warning for warning in cfg.warnings)

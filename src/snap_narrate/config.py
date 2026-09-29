@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import threading
 import tomllib
 from dataclasses import dataclass, field, fields, is_dataclass
@@ -313,6 +314,11 @@ def _normalize(cfg: AppConfig) -> None:
         cfg.elevenlabs.output_format, SUPPORTED_OUTPUT_FORMATS, "mp3_44100_128", "elevenlabs.output_format"
     )
     cfg.hud.position = pick(cfg.hud.position, ["top", "bottom"], "bottom", "hud.position")
+    valid_addons = [name for name in cfg.addons.extra if re.fullmatch(r"[A-Za-z0-9_.\-]+", name)]
+    for name in cfg.addons.extra:
+        if name not in valid_addons:
+            cfg.warnings.append(f"addons.extra: ignored invalid addon name {name!r}")
+    cfg.addons.extra = valid_addons
 
     cfg.vision.timeout_sec = max(cfg.vision.timeout_sec, 5)
     cfg.capture.max_dimension = max(cfg.capture.max_dimension, 0)

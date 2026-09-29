@@ -234,6 +234,9 @@ class SettingsWindow:
             value = self.cfg.get(dotted)
             if hint is bool:
                 self.vars[dotted] = tk.BooleanVar(self.win, value=bool(value))
+            elif isinstance(value, list):
+                # Lists edit as "a, b" text; str(list) would save "[]" back as an item.
+                self.vars[dotted] = tk.StringVar(self.win, value=", ".join(str(item) for item in value))
             else:
                 self.vars[dotted] = tk.StringVar(self.win, value="" if value is None else str(value))
         enabled = False

@@ -68,11 +68,32 @@ def test_relative_paths_resolve_against_config_folder(tmp_path: Path) -> None:
 def test_store_ignores_its_own_writes(tmp_path: Path) -> None:
     store = ConfigStore(tmp_path / "config.toml")
     store.ensure_exists()
-    store.load()
+    store.load(mark_seen=True)
     assert not store.changed_on_disk()
     store.update({"capture.mode": "region"})
     assert not store.changed_on_disk()
     assert store.load().capture.mode == "region"
+
+
+def test_outside_edit_survives_reads_and_our_own_writes(tmp_path: Path) -> None:
+    import os
+
+    store = ConfigStore(tmp_path / "config.toml")
+    store.ensure_exists()
+    store.load(mark_seen=True)
+    # Another process (the standalone settings window) saves a new voice.
+    other = ConfigStore(store.path)
+    other.update({"elevenlabs.voice_id": "new-voice"})
+    stat = store.path.stat()
+    os.utime(store.path, ns=(stat.st_atime_ns, stat.st_mtime_ns + 10_000_000))  # never the same tick
+
+    store.load()  # e.g. the settings window previewing
+    assert store.changed_on_disk()
+    store.update({"playback.volume": 0.5})  # e.g. a volume hotkey
+    assert store.changed_on_disk()  # the app still reloads and picks up the new voice
+    cfg = store.load(mark_seen=True)
+    assert (cfg.elevenlabs.voice_id, cfg.playback.volume) == ("new-voice", 0.5)
+    assert not store.changed_on_disk()
 
 
 def test_missing_required() -> None:

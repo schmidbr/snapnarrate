@@ -52,8 +52,10 @@ class History:
         self._pending: dict[int, dict[str, Any]] = {}
         self._by_session: dict[int, str] = {}
         self._version = 0
+        self._known_stamp: tuple[int, int] | None = None  # (mtime, size) of the file we last read or wrote
         self._unsubscribe: list[Callable[[], None]] = []
-        self._load()
+        with self._lock:
+            self._load_locked()
 
     # ---- reading ----------------------------------------------------------------------
 
@@ -74,26 +76,34 @@ class History:
         with self._lock:
             return next((e for e in self._entries if e.id == entry_id), None)
 
+    def refresh(self) -> None:
+        """Pick up changes another process (the running app, or a standalone settings
+        window) saved to the file."""
+        with self._lock:
+            self._reload_if_changed_locked()
+
     # ---- editing ----------------------------------------------------------------------
 
     def configure(self, max_items: int, enabled: bool) -> None:
         with self._lock:
+            self._reload_if_changed_locked()
             self.max_items = max(1, max_items)
             self.enabled = enabled
-            trimmed = len(self._entries) > self.max_items
-            del self._entries[self.max_items :]
-        if trimmed:
-            self._changed()
+            if len(self._entries) > self.max_items:
+                del self._entries[self.max_items :]
+                self._changed_locked()
 
     def delete(self, entry_id: str) -> None:
         with self._lock:
+            self._reload_if_changed_locked()
             self._entries = [e for e in self._entries if e.id != entry_id]
-        self._changed()
+            self._changed_locked()
 
     def clear(self) -> None:
         with self._lock:
+            self._reload_if_changed_locked()
             self._entries.clear()
-        self._changed()
+            self._changed_locked()
 
     # ---- recording --------------------------------------------------------------------
 
@@ -124,11 +134,14 @@ class History:
             if session in self._pending:
                 self._pending[session]["text"] = text
             entry_id = self._by_session.get(session) if event.data.get("final") else None
-            entry = next((e for e in self._entries if e.id == entry_id), None) if entry_id else None
+            if not entry_id:
+                return
+            self._reload_if_changed_locked()
+            entry = next((e for e in self._entries if e.id == entry_id), None)
             if entry is None or entry.text == text:
                 return
             entry.text = text  # the full passage arrived after speech started
-        self._changed()
+            self._changed_locked()
 
     def _on_finished(self, event: events.Event) -> None:
         session = int(event.data["session"])
@@ -142,6 +155,7 @@ class History:
                 or not pending["text"].strip()
             ):
                 return
+            self._reload_if_changed_locked()  # don't undo a clear or delete made in another window
             entry = HistoryEntry(
                 id=f"{int(pending['time'] * 1000)}-{session}",
                 time=pending["time"],
@@ -155,16 +169,31 @@ class History:
             self._by_session[session] = entry.id
             for stale in sorted(self._by_session)[:-16]:
                 self._by_session.pop(stale, None)
-        self._changed()
+            self._changed_locked()
 
     # ---- storage ----------------------------------------------------------------------
+    # Everything below runs with self._lock held, so reads, edits and writes never interleave.
 
-    def _changed(self) -> None:
+    def _changed_locked(self) -> None:
         self._version += 1
-        self._save()
+        self._save_locked()
 
-    def _load(self) -> None:
-        if self.path is None or not self.path.exists():
+    def _stamp(self) -> tuple[int, int] | None:
+        try:
+            stat = self.path.stat() if self.path is not None else None
+        except OSError:
+            return None
+        return (stat.st_mtime_ns, stat.st_size) if stat is not None else None
+
+    def _reload_if_changed_locked(self) -> None:
+        if self.path is not None and self._stamp() != self._known_stamp:
+            self._load_locked()
+            self._version += 1
+
+    def _load_locked(self) -> None:
+        self._known_stamp = self._stamp()
+        if self.path is None or self._known_stamp is None:
+            self._entries = []
             return
         try:
             raw = json.loads(self.path.read_text(encoding="utf-8"))
@@ -175,16 +204,17 @@ class History:
             logger.warning("event=history_load_failed error=%s", exc)
             self._entries = []
 
-    def _save(self) -> None:
+    def _save_locked(self) -> None:
         if self.path is None:
             return
-        with self._lock:
-            data = {"version": 1, "entries": [asdict(e) for e in self._entries]}
+        data = {"version": 1, "entries": [asdict(e) for e in self._entries]}
+        # Per-process temp name: the app and a standalone settings window may save at once.
+        tmp = self.path.with_name(f"{self.path.name}.{os.getpid()}.tmp")
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
-            tmp = self.path.with_suffix(".tmp")
             tmp.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
             os.replace(tmp, self.path)
+            self._known_stamp = self._stamp()
         except OSError as exc:
             logger.warning("event=history_save_failed error=%s", exc)
 

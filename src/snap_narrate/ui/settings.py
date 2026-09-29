@@ -8,6 +8,7 @@ hands results back through `self.post`, which runs them on the UI thread.
 
 from __future__ import annotations
 
+import copy
 import logging
 import queue
 import tkinter as tk
@@ -39,6 +40,7 @@ from snap_narrate.ui.widgets import (
     Segmented,
     Slider,
     TextField,
+    WatchesVars,
     button,
     hotkey_problem,
     run_in_background,
@@ -243,11 +245,8 @@ class SettingsWindow:
             value = self.cfg.get(dotted)
             if hint is bool:
                 self.vars[dotted] = tk.BooleanVar(self.win, value=bool(value))
-            elif isinstance(value, list):
-                # Lists edit as "a, b" text; str(list) would save "[]" back as an item.
-                self.vars[dotted] = tk.StringVar(self.win, value=", ".join(str(item) for item in value))
             else:
-                self.vars[dotted] = tk.StringVar(self.win, value="" if value is None else str(value))
+                self.vars[dotted] = tk.StringVar(self.win, value=_as_text(value))
         enabled = False
         if self.startup is not None:
             try:
@@ -283,6 +282,21 @@ class SettingsWindow:
         if self._home_job is not None:
             self.win.after_cancel(self._home_job)
         self._home_job = self.win.after(200, self._refresh_home_status)
+
+    def apply_external(self, changes: dict[str, Any]) -> None:
+        """Settings changed and saved outside this window (tray menu, volume hotkeys): show
+        them, and count them as saved so the next Save doesn't write the old values back."""
+        if self._closed:
+            return
+        for key, value in changes.items():
+            var = self.vars.get(key)
+            if var is None:
+                continue
+            new = bool(value) if isinstance(var, tk.BooleanVar) else _as_text(value)
+            self._snapshot[key] = new
+            if var.get() != new:
+                var.set(new)
+        self._refresh_footer()
 
     # ---- shell ------------------------------------------------------------------------
 
@@ -353,6 +367,8 @@ class SettingsWindow:
             self._pages[self._current].grid_remove()
         if page_id not in self._pages:
             self._pages[page_id] = self._build_page(page_id)
+        elif page_id == "home" and self._current != "home":
+            self._refresh_home_status(force=True)  # the card is only kept current while it's visible
         self._pages[page_id].grid(row=0, column=0, sticky="nsew")
         self._current = page_id
         self._title.configure(text=next(label for p, label, _ in PAGES if p == page_id))
@@ -439,7 +455,7 @@ class SettingsWindow:
     def _page_home(self, body: Any) -> None:
         self._home_holder = ctk.CTkFrame(body, fg_color="transparent")
         self._home_holder.pack(fill="x", pady=(8, 0))
-        self._refresh_home_status()
+        self._refresh_home_status(force=True)
 
         card = section(body, self.fonts, "Quick settings")
         self.add_slider(card, "playback.volume", "Narration volume", "Independent of the Windows volume", 0.1, 1.5, 0.05, lambda v: f"{v:.0%}")
@@ -448,8 +464,11 @@ class SettingsWindow:
         if self.startup is not None:
             self._row(card, STARTUP_KEY, "Start with Windows", "Launch SnapNarrate when you sign in", lambda p: switch(p, self.var(STARTUP_KEY)))
 
-    def _refresh_home_status(self) -> None:
+    def _refresh_home_status(self, force: bool = False) -> None:
+        """Update the sidebar status, and the Home status card if Home is showing."""
         self._home_job = None
+        if self._closed:
+            return
         cfg = self._preview_config()
         missing = missing_required(cfg)
         running = self.actions.app_running()
@@ -458,7 +477,7 @@ class SettingsWindow:
             text_color=t.WARNING if missing else (t.SUCCESS if running else t.TEXT_SECONDARY),
         )
         holder = getattr(self, "_home_holder", None)
-        if holder is None or not holder.winfo_exists():
+        if holder is None or not holder.winfo_exists() or not (force or self._current == "home"):
             return
         for child in holder.winfo_children():
             child.destroy()
@@ -660,8 +679,10 @@ class SettingsWindow:
         if self._closed:
             return
         history = self.actions.history
-        if self._current == "history" and history is not None and history.version != self._history_version:
-            self._render_history()
+        if self._current == "history" and history is not None:
+            history.refresh()  # passages another process saved (the app, when this window runs standalone)
+            if history.version != self._history_version:
+                self._render_history()
         self.win.after(1000, self._poll_history)
 
     def _page_voice(self, body: Any) -> None:
@@ -945,8 +966,9 @@ class SettingsWindow:
     # ---- save / discard / close -------------------------------------------------------
 
     def _preview_config(self) -> AppConfig:
-        """The config as the form currently describes it, ignoring invalid fields."""
-        cfg = self.store.load()
+        """The config as the form currently describes it, ignoring invalid fields. Built from
+        the form, not the file: it runs on every edit."""
+        cfg = copy.deepcopy(self.cfg)
         for key, hint in self.types.items():
             if key in cfg.env_overrides:
                 continue
@@ -1054,6 +1076,16 @@ class SettingsWindow:
             self.on_closed()
 
 
+def _as_text(value: Any) -> str:
+    """How a setting shows in a text field. Lists edit as "a, b": str(list) would save "[]"
+    back as an item."""
+    if value is None:
+        return ""
+    if isinstance(value, list):
+        return ", ".join(str(item) for item in value)
+    return str(value)
+
+
 _preview_sessions = iter(range(1, 1 << 30))
 
 
@@ -1068,7 +1100,7 @@ def _open(path: Path) -> None:
     open_path(path)
 
 
-class VoicePicker(ctk.CTkFrame):
+class VoicePicker(WatchesVars, ctk.CTkFrame):
     """Searchable list of the account's voices by name, with free sample playback."""
 
     def __init__(self, parent: Any, window: SettingsWindow) -> None:
@@ -1094,7 +1126,7 @@ class VoicePicker(ctk.CTkFrame):
             scrollbar_button_hover_color=t.TEXT_SECONDARY,
         )  # fmt: skip
         self._list.pack(fill="x", padx=8, pady=(0, 10))
-        window.var("elevenlabs.voice_id").trace_add("write", lambda *_: self.after_idle(self.render))
+        self.watch(window.var("elevenlabs.voice_id"), lambda: self.after_idle(self.render))
         self.render()
 
     def set_loading(self) -> None:

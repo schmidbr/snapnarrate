@@ -70,6 +70,7 @@ class Engine:
         self._region_busy = False
         self.run_id = uuid.uuid4().hex[:12]  # identifies this app run in history entries
         self._audio: OrderedDict[int, list[tuple[bytes, str, str]]] = OrderedDict()
+        self._audio_done: set[int] = set()  # sessions whose whole passage is in _audio
 
         self.player = player or AudioPlayer(
             cfg.elevenlabs.output_format,
@@ -94,6 +95,7 @@ class Engine:
         )
         narrator = self._narrator_factory(cfg, self.player, self.bus)
         narrator.on_audio = self._remember_audio
+        narrator.on_audio_complete = self._audio_finished
         with self._lock:
             previous = getattr(self, "narrator", None)
             if previous is not None and previous.settings.dedup_similarity_threshold == narrator.settings.dedup_similarity_threshold:
@@ -167,10 +169,12 @@ class Engine:
         return self._submit(_Job("text", text, source))
 
     def replay(self, entry: Any) -> Future[NarrationResult]:
-        """Play a history entry again: its cached audio if this run still has it (free,
-        instant), otherwise voice its text again."""
+        """Play a history entry again: its cached audio if this run still has all of it (free,
+        instant), otherwise voice its text again. A passage that was stopped part way, or is
+        still being read, only has some of its audio cached."""
         with self._lock:
-            chunks = list(self._audio.get(entry.session, [])) if entry.run_id == self.run_id else []
+            cached = entry.run_id == self.run_id and entry.session in self._audio_done
+            chunks = list(self._audio.get(entry.session, [])) if cached else []
         if chunks:
             return self._submit(_Job("replay", chunks, "replay"))
         return self.speak(entry.text, "replay")
@@ -180,7 +184,13 @@ class Engine:
             self._audio.setdefault(session_id, []).append((audio, text, output_format))
             self._audio.move_to_end(session_id)
             while len(self._audio) > REPLAY_CACHE_SESSIONS:
-                self._audio.popitem(last=False)
+                dropped, _chunks = self._audio.popitem(last=False)
+                self._audio_done.discard(dropped)
+
+    def _audio_finished(self, session_id: int) -> None:
+        with self._lock:
+            if session_id in self._audio:
+                self._audio_done.add(session_id)
 
     def stop_speaking(self) -> None:
         with self._lock:

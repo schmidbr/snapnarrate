@@ -17,16 +17,17 @@ def _virtual_screen() -> tuple[int, int, int, int]:
 
 def select_region(ui: TkThread, timeout: float = 120.0) -> Bounds | None:
     """Show the picker and wait for a selection. Returns absolute virtual-desktop bounds,
-    or None if cancelled (Esc / right-click). Must not be called on the Tk thread."""
+    or None if cancelled (Esc / right-click) or left alone for `timeout` seconds, which
+    also closes the overlay. Must not be called on the Tk thread."""
     result: Future[Bounds | None] = Future()
-    ui.submit(_open_picker, ui, result)
+    ui.submit(_open_picker, ui, result, timeout)
     try:
-        return result.result(timeout=timeout)
+        return result.result(timeout=timeout + 10)  # the picker times itself out; this is a backstop
     except TimeoutError:
         return None
 
 
-def _open_picker(ui: TkThread, result: Future[Bounds | None]) -> None:
+def _open_picker(ui: TkThread, result: Future[Bounds | None], timeout: float) -> None:
     left, top, width, height = _virtual_screen()
     win = tk.Toplevel(ui.root)
     win.overrideredirect(True)
@@ -40,6 +41,9 @@ def _open_picker(ui: TkThread, result: Future[Bounds | None]) -> None:
     state: dict[str, int | None] = {"x": None, "y": None, "rect": None}
 
     def finish(bounds: Bounds | None) -> None:
+        if result.done():
+            return
+        win.after_cancel(expiry)
         win.destroy()
         # Make sure the overlay is gone from the screen before anyone grabs pixels.
         if ui.root is not None:
@@ -69,5 +73,7 @@ def _open_picker(ui: TkThread, result: Future[Bounds | None]) -> None:
     canvas.bind("<ButtonPress-3>", lambda _e: finish(None))
     win.bind("<Escape>", lambda _e: finish(None))
     win.protocol("WM_DELETE_WINDOW", lambda: finish(None))
+    # Left alone (the player alt-tabbed away): close, rather than dim every monitor and swallow clicks.
+    expiry = win.after(int(timeout * 1000), lambda: finish(None))
     win.lift()
     win.focus_force()

@@ -78,6 +78,16 @@ def finished(seen: list[events.Event], timeout: float = 2.0) -> events.Event:
     raise AssertionError("narration did not finish")
 
 
+def fully_cached(engine: Engine, session: int, timeout: float = 2.0) -> None:
+    """Wait until the background tail has voiced the rest of the passage."""
+    done = threading.Event()
+    for _ in range(int(timeout / 0.01)):
+        if session in engine._audio_done:
+            return
+        done.wait(0.01)
+    raise AssertionError("passage audio was never completed")
+
+
 def test_capture_narrates_and_reports(engine_parts) -> None:  # noqa: ANN001
     engine, seen, vision, _speech, capturer = engine_parts
     engine.capture_fullscreen()
@@ -142,11 +152,35 @@ def test_replay_uses_cached_audio_without_new_speech(engine_parts) -> None:  # n
     engine, seen, _vision, speech, _capturer = engine_parts
     engine.capture_fullscreen()
     session = finished(seen).data["session"]
+    fully_cached(engine, session)
     calls_before = len(speech.calls)
     entry = HistoryEntry(id="x", time=0, source="hotkey", text=TEXT, run_id=engine.run_id, session=session)
     result = engine.replay(entry).result(timeout=2)
     assert result.played and result.message == "Replaying"
     assert len(speech.calls) == calls_before  # no new ElevenLabs request
+
+
+def test_replay_of_a_stopped_passage_voices_the_whole_text_again(engine_parts) -> None:  # noqa: ANN001
+    from snap_narrate.history import HistoryEntry
+
+    engine, seen, _vision, speech, _capturer = engine_parts
+    stopped = threading.Event()
+
+    def stop_during_tail(_text: str) -> None:
+        if len(speech.calls) == 1:  # the first chunk is playing; Stop while the next is voiced
+            engine.stop_speaking()
+            stopped.set()
+
+    speech.before = stop_during_tail
+    engine.capture_fullscreen()
+    session = finished(seen).data["session"]
+    assert stopped.wait(2)
+    calls_before = len(speech.calls)
+    entry = HistoryEntry(id="x", time=0, source="hotkey", text=TEXT, run_id=engine.run_id, session=session)
+    result = engine.replay(entry).result(timeout=2)
+    assert result.played and result.message != "Replaying"
+    assert len(speech.calls) > calls_before  # voiced again, not the partial cached audio
+    assert TEXT.strip().startswith(speech.calls[calls_before][0][:40])
 
 
 def test_replay_from_an_older_run_voices_the_text_again(engine_parts) -> None:  # noqa: ANN001
@@ -166,7 +200,7 @@ def test_history_records_a_real_capture_and_replays_it(engine_parts, tmp_path) -
     history.run_id = engine.run_id
     history.attach(engine.bus)
     engine.capture_fullscreen()
-    finished(seen)
+    fully_cached(engine, finished(seen).data["session"])
     entry = history.latest()
     assert entry is not None and entry.text.startswith("The lantern flickered") and entry.trigger == "Full screen"
     calls = len(speech.calls)

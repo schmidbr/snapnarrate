@@ -72,6 +72,45 @@ def test_capped_persisted_and_editable(tmp_path: Path) -> None:
     assert History(tmp_path / "history.json").entries() == []
 
 
+def test_clear_in_another_window_is_not_undone_by_the_app(tmp_path: Path) -> None:
+    app_history, bus = recorder(tmp_path)
+    narrate(bus, 1, "hotkey:fullscreen", "A private passage.")
+    narrate(bus, 2, "hotkey:fullscreen", "Another private passage.")
+
+    standalone = History(tmp_path / "history.json")  # `snapnarrate ui` in its own process
+    standalone.clear()
+    narrate(bus, 3, "hotkey:fullscreen", "Read after clearing.")
+
+    assert [e.text for e in app_history.entries()] == ["Read after clearing."]
+    assert [e.text for e in History(tmp_path / "history.json").entries()] == ["Read after clearing."]
+    standalone.refresh()  # and the standalone window sees what the app read since
+    assert [e.text for e in standalone.entries()] == ["Read after clearing."]
+
+
+def test_concurrent_edits_leave_a_valid_file(tmp_path: Path) -> None:
+    import threading
+
+    history, bus = recorder(tmp_path, max_items=1000)
+
+    def record() -> None:
+        for session in range(1, 101):
+            narrate(bus, session, "api", f"Passage {session}")
+
+    def delete() -> None:
+        for _ in range(100):
+            latest = history.latest()
+            if latest is not None:
+                history.delete(latest.id)
+
+    threads = [threading.Thread(target=record), threading.Thread(target=delete)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert [e.id for e in History(tmp_path / "history.json").entries()] == [e.id for e in history.entries()]
+    assert list(tmp_path.glob("*.tmp")) == []
+
+
 def test_corrupt_file_is_ignored(tmp_path: Path) -> None:
     (tmp_path / "history.json").write_text("{not json", encoding="utf-8")
     assert History(tmp_path / "history.json").entries() == []

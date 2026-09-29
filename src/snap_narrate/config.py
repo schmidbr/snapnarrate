@@ -471,16 +471,22 @@ class ConfigStore:
         if not self.path.exists():
             init_config(self.path)
 
-    def load(self) -> AppConfig:
+    def load(self, mark_seen: bool = False) -> AppConfig:
+        """Read the config. Only the owner that applies it passes mark_seen=True: a plain read
+        (a settings preview, update()) must not hide an outside edit from changed_on_disk()."""
         with self._lock:
             cfg = load_config(self.path)
-            self._known_mtime = self._mtime()
+            if mark_seen:
+                self._known_mtime = self._mtime()
             return cfg
 
     def save(self, cfg: AppConfig) -> None:
         with self._lock:
+            unseen_edit = self._changed_locked()
             save_config(self.path, cfg)
-            self._known_mtime = self._mtime()
+            # Our own write isn't news, unless it carried an outside edit nobody has applied yet.
+            if not unseen_edit:
+                self._known_mtime = self._mtime()
 
     def update(self, changes: dict[str, Any]) -> AppConfig:
         """Load, apply {dotted.path: value} changes, save. Returns the saved config."""
@@ -492,5 +498,8 @@ class ConfigStore:
 
     def changed_on_disk(self) -> bool:
         with self._lock:
-            current = self._mtime()
-            return current is not None and current != self._known_mtime
+            return self._changed_locked()
+
+    def _changed_locked(self) -> bool:
+        current = self._mtime()
+        return current is not None and self._known_mtime is not None and current != self._known_mtime

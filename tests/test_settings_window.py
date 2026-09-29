@@ -143,6 +143,62 @@ def test_saving_keeps_lists_as_lists(window) -> None:  # noqa: ANN001
     assert window.store.load().addons.extra == ["chat_log", "other"]
 
 
+def test_slider_moved_away_and_back_is_not_an_unsaved_change(window) -> None:  # noqa: ANN001
+    from snap_narrate.ui.widgets import Slider
+
+    slider = Slider(ctk.CTkFrame(window.win), window.var("playback.volume"), window.fonts, 0.1, 1.5, 0.05, str, integer=False)
+    slider._moved(0.9000000000000001)
+    assert window.dirty
+    slider._moved(1.0000000000000002)
+    assert window.var("playback.volume").get() == "1.0" and not window.dirty
+
+
+def test_tray_volume_change_is_shown_and_not_undone_by_save(window) -> None:  # noqa: ANN001
+    window.apply_external({"playback.volume": 0.7, "capture.mode": "region"})
+    assert window.var("playback.volume").get() == "0.7" and window.var("capture.mode").get() == "region"
+    assert not window.dirty
+    window.var("hud.font_size").set("30")  # then an unrelated change is saved
+    assert window.save()
+    saved = window.store.load()
+    assert saved.playback.volume == 0.7 and saved.capture.mode == "region"
+
+
+def test_closing_mid_recording_gives_hotkeys_back(window) -> None:  # noqa: ANN001
+    import tkinter as tk
+
+    from snap_narrate.ui.widgets import HotkeyRecorder
+
+    paused: list[bool] = []
+    frame = ctk.CTkFrame(window.win)
+    recorder = HotkeyRecorder(frame, tk.StringVar(window.win, "ctrl+shift+n"), window.fonts, lambda _s: None, paused.append)
+    recorder.start()
+    frame.destroy()  # the window closes while "Press a shortcut…" is showing
+    assert paused == [True, False]
+
+
+def test_rebuilt_pages_leave_no_dead_callbacks(window, root, monkeypatch) -> None:  # noqa: ANN001
+    errors: list = []
+    monkeypatch.setattr(root, "report_callback_exception", lambda *exc: errors.append(exc))
+    window.show("reading")
+    for provider in ("ollama-cloud", "openai", "ollama-cloud"):
+        window.var("vision.provider").set(provider)
+        pump(window, 0.1)
+    window.var("ollama_cloud.model").set("glm-5.3-flash")
+    pump(window, 0.1)
+    assert errors == []
+    assert len(window.var("ollama_cloud.model").trace_info()) == 2  # the window's own, and the live dropdown's
+
+
+def test_home_status_is_built_from_the_form_not_the_file(window, monkeypatch) -> None:  # noqa: ANN001
+    reads: list[int] = []
+    original = window.store.load
+    monkeypatch.setattr(window.store, "load", lambda *a, **k: reads.append(1) or original(*a, **k))
+    window.show("voice")
+    window.var("elevenlabs.api_key").set("sk_typed")
+    pump(window, 0.4)
+    assert reads == []
+
+
 def test_history_page_lists_replays_copies_and_deletes(tmp_path: Path, root, monkeypatch) -> None:  # noqa: ANN001
     from snap_narrate.history import History, HistoryEntry
     from snap_narrate.ui import settings as S

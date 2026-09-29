@@ -17,10 +17,12 @@ def test_normalize_collapses_whitespace_and_blank_lines() -> None:
 def test_deduper_flags_exact_and_near_repeats() -> None:
     dedup = TextDeduper(0.9)
     text = "The quick brown fox jumps over the lazy dog near the river bank."
-    assert dedup.seen_recently(text) is False
-    assert dedup.seen_recently(text) is True
-    assert dedup.seen_recently(text.replace("river", "rivers")) is True
-    assert dedup.seen_recently("Completely different narrative about a haunted lighthouse.") is False
+    assert dedup.is_repeat(text) is False
+    assert dedup.is_repeat(text) is False  # checking alone never marks text as read
+    dedup.remember(text)
+    assert dedup.is_repeat(text) is True
+    assert dedup.is_repeat(text.replace("river", "rivers")) is True
+    assert dedup.is_repeat("Completely different narrative about a haunted lighthouse.") is False
 
 
 def test_head_chunk_prefers_whole_sentences() -> None:

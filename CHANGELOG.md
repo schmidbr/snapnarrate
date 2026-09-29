@@ -4,6 +4,24 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-09-28
+
+Fixes from a code review of the 0.5–0.7 rewrite.
+
+### Fixed
+
+- **Run at sign-in** registers the windowed `SnapNarrate.exe` even when turned on from `snapnarrate-cli startup --enable` or the standalone window. Before, it could register the console exe, which opened a console window at sign-in that quit SnapNarrate when closed.
+- **Upgrading from 0.4.x:** the old Startup-folder shortcut is replaced on first launch, so the old version no longer starts alongside this one.
+- **Hotkeys** come back if the window is closed while a new shortcut is being recorded, and no longer stay switched off when recording is cancelled straight away.
+- **Retrying a passage:** text is only counted as "already read" once it starts playing. A voice request that failed, or a Stop pressed while the screen was still being read, no longer blocks capturing the same screen again.
+- **Replay** of a passage that was stopped part way, or is still being read, voices the whole passage again instead of replaying only the part that had been spoken.
+- **Settings from another window:** changes saved in `snapnarrate ui` while the app runs are always applied, even if a volume shortcut or the tray menu changed a setting in the meantime.
+- **Volume and capture mode** changed from the tray or shortcuts show up in an open SnapNarrate window, and its next Save no longer puts the old values back.
+- **History** cleared or edited in the standalone window is no longer restored by the running app, and the History page there shows new passages as they're read. Saves are now serialized, so a delete at the same moment as a new passage can't corrupt the file.
+- **Region capture** left alone for two minutes closes its dimmed overlay instead of leaving it over every monitor.
+- Moving a slider away and back no longer shows "Unsaved changes", and switching reading services no longer leaves hidden errors behind.
+- Typing in the window is faster: the Home status no longer re-reads the settings file and rebuilds itself on every keystroke.
+
 ## [0.7.0] - 2026-09-28
 
 ### Added

@@ -33,6 +33,23 @@ def run_in_background(post: Post, work: Callable[[], Any], done: Callable[[Any],
     threading.Thread(target=worker, daemon=True).start()
 
 
+class WatchesVars:
+    """Mixin for widgets that follow a Tk variable. The watch ends when the widget is
+    destroyed, so a rebuilt page doesn't leave callbacks pointing at dead widgets."""
+
+    def watch(self, var: tk.Variable, callback: Callable[[], None]) -> None:
+        trace_id = var.trace_add("write", lambda *_: callback())
+        self.__dict__.setdefault("_var_watches", []).append((var, trace_id))
+
+    def destroy(self) -> None:
+        for var, trace_id in self.__dict__.pop("_var_watches", []):
+            try:
+                var.trace_remove("write", trace_id)
+            except tk.TclError:  # the variable went first
+                pass
+        super().destroy()  # type: ignore[misc]
+
+
 # ---- layout -------------------------------------------------------------------------------
 
 
@@ -95,7 +112,7 @@ def switch(parent: Any, var: tk.BooleanVar, state: str = "normal") -> ctk.CTkSwi
     )  # fmt: skip
 
 
-class LabeledOption(ctk.CTkOptionMenu):
+class LabeledOption(WatchesVars, ctk.CTkOptionMenu):
     """Dropdown that shows friendly labels but stores raw values in `var`."""
 
     def __init__(self, parent: Any, var: tk.StringVar, options: Options, fonts: t.Fonts, width: int = 260, state: str = "normal") -> None:
@@ -112,7 +129,7 @@ class LabeledOption(ctk.CTkOptionMenu):
             dropdown_hover_color=t.CONTROL_HOVER, dropdown_text_color=t.TEXT, dynamic_resizing=False, state=state,
         )  # fmt: skip
         self._sync()
-        var.trace_add("write", lambda *_: self._sync())
+        self.watch(var, self._sync)
 
     def _picked(self, label: str) -> None:
         self._var.set(self._by_label.get(label, label))
@@ -124,7 +141,7 @@ class LabeledOption(ctk.CTkOptionMenu):
             self.set(label)
 
 
-class Segmented(ctk.CTkSegmentedButton):
+class Segmented(WatchesVars, ctk.CTkSegmentedButton):
     """A small set of mutually exclusive choices shown side by side."""
 
     def __init__(self, parent: Any, var: tk.StringVar, options: Options, fonts: t.Fonts, state: str = "normal") -> None:
@@ -137,7 +154,7 @@ class Segmented(ctk.CTkSegmentedButton):
             state=state,
         )  # fmt: skip
         self._sync()
-        var.trace_add("write", lambda *_: self._sync())
+        self.watch(var, self._sync)
 
     def _picked(self, label: str) -> None:
         self._var.set(next((value for value, lbl in self._choices if lbl == label), label))
@@ -178,7 +195,7 @@ class TextField(ctk.CTkFrame):
         self._eye.configure(text=t.ICONS["hide"] if hidden else t.ICONS["show"])
 
 
-class Slider(ctk.CTkFrame):
+class Slider(WatchesVars, ctk.CTkFrame):
     """Slider bound to a string var (so it shares storage with text fields), with a value label."""
 
     def __init__(
@@ -196,10 +213,12 @@ class Slider(ctk.CTkFrame):
         )  # fmt: skip
         self._slider.pack(side="left")
         self._sync()
-        var.trace_add("write", lambda *_: self._sync())
+        self.watch(var, self._sync)
 
     def _moved(self, value: float) -> None:
-        self._var.set(str(int(round(value))) if self._integer else f"{value:.2f}")
+        # Same text the window loads a setting as (str of the number), so moving the slider
+        # away and back again doesn't count as an unsaved change.
+        self._var.set(str(int(round(value))) if self._integer else str(round(value, 4)))
 
     def _sync(self) -> None:
         try:
@@ -231,7 +250,7 @@ def button(parent: Any, text: str, command: Callable[[], None], fonts: t.Fonts, 
 # ---- hotkey recorder ----------------------------------------------------------------------
 
 
-class HotkeyRecorder(ctk.CTkFrame):
+class HotkeyRecorder(WatchesVars, ctk.CTkFrame):
     """Shows a shortcut as key caps. Click it, then press a new combination (Esc cancels)."""
 
     def __init__(
@@ -260,7 +279,22 @@ class HotkeyRecorder(ctk.CTkFrame):
         # Only takes space when there is something to say, so rows stay evenly spaced.
         self._error = ctk.CTkLabel(self, text="", font=fonts.caption, text_color=t.DANGER, anchor="e", height=16)
         self._render()
-        var.trace_add("write", lambda *_: self._render())
+        self.watch(var, self._render)
+
+    def destroy(self) -> None:
+        if self._recording:
+            # Closed mid-recording (window closed, page rebuilt): give the app its hotkeys back.
+            self._recording = False
+            try:
+                top = self.winfo_toplevel()
+                for sequence, funcid in self._bindings:
+                    top.unbind(sequence, funcid)
+            except tk.TclError:
+                pass
+            self._bindings.clear()
+            if self._on_recording:
+                self._on_recording(False)
+        super().destroy()
 
     def _render(self) -> None:
         if self._recording:

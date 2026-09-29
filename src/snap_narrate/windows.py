@@ -22,7 +22,10 @@ def launch_command(config_path: Path) -> str:
     """Command line that starts the tray app with this config."""
     config = f'--config "{config_path.resolve()}"'
     if is_frozen():
-        return f'"{sys.executable}" run {config}'
+        # Always the windowed exe, even when asked from snapnarrate-cli.exe: the console build
+        # would open a console window at sign-in, and closing it would quit SnapNarrate.
+        windowed = Path(sys.executable).with_name(f"{APP_NAME}.exe")
+        return f'"{windowed if windowed.exists() else sys.executable}" run {config}'
     pythonw = Path(sys.executable).with_name("pythonw.exe")
     interpreter = pythonw if pythonw.exists() else Path(sys.executable)
     return f'"{interpreter}" -m snap_narrate run {config}'
@@ -65,13 +68,29 @@ class StartupManager:
     def set(self, enabled: bool) -> None:
         self.enable() if enabled else self.disable()
 
+    def migrate_legacy(self) -> bool:
+        """Versions before 0.5 started at sign-in from a Startup-folder shortcut to the old exe.
+        Swap it for the Run key so the user keeps starting at sign-in, with this version only."""
+        legacy = _legacy_startup_shortcut()
+        if legacy is None or not legacy.exists():
+            return False
+        self.enable()  # also removes the shortcut
+        logger.info("event=legacy_startup_migrated")
+        return True
 
-def _remove_legacy_startup_shortcut() -> None:
-    """Versions before 0.5 used a Startup-folder shortcut; remove it so we never launch twice."""
+
+def _legacy_startup_shortcut() -> Path | None:
     appdata = os.getenv("APPDATA")
     if not appdata:
+        return None
+    return Path(appdata) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup" / f"{APP_NAME}.lnk"
+
+
+def _remove_legacy_startup_shortcut() -> None:
+    """Remove the pre-0.5 Startup-folder shortcut so we never launch twice."""
+    legacy = _legacy_startup_shortcut()
+    if legacy is None:
         return
-    legacy = Path(appdata) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup" / f"{APP_NAME}.lnk"
     try:
         legacy.unlink(missing_ok=True)
     except OSError as exc:

@@ -118,8 +118,10 @@ class Narrator:
         self._sleep = sleep_fn
         self._now = time_fn
         self._spawn = spawn
-        # on_audio(session_id, audio, text, output_format) for every chunk handed to the player.
+        # on_audio(session_id, audio, text, output_format) for every chunk handed to the player,
+        # then on_audio_complete(session_id) once a session's whole passage has been handed over.
         self.on_audio: Callable[[int, bytes, str, str], None] | None = None
+        self.on_audio_complete: Callable[[int], None] | None = None
 
     # ---- public API -------------------------------------------------------------------
 
@@ -154,7 +156,8 @@ class Narrator:
             return NarrationResult("cancelled", "Cancelled", len(text), text)
 
         self._publish_text(session, text, final=True)
-        return self._speak(self._split(text), session, start, extract_ms, fast_first=False, text=text)
+        read = text if dedup and self.settings.dedup_enabled else None
+        return self._speak(self._split(text), session, start, extract_ms, fast_first=False, text=text, read=read)
 
     def _narrate_speech_first(
         self, image: bytes, session: Session, profile: str, dedup: bool, start: float
@@ -171,7 +174,7 @@ class Narrator:
             logger.info("event=speech_first_fallback reason=short_first_read chars=%s", len(initial_text))
             return None
         # Dedup on the whole first read: two dialogues can open with the same speaker line.
-        if dedup and self.settings.dedup_enabled and self.deduper.seen_recently(initial_text):
+        if dedup and self.settings.dedup_enabled and self.deduper.is_repeat(initial_text):
             return NarrationResult(
                 "skipped", "Already read this text", len(initial_text), initial_text, Timings(extract_ms, 0, self._ms_since(start))
             )
@@ -202,7 +205,8 @@ class Narrator:
             logger.info("event=speech_first_second_read full_chars=%s remaining_chars=%s exact=%s", len(full), len(rest), exact)
             return followup_chunks(rest, chunk_size, 1 if exact else self.settings.followup_min_chars)
 
-        return self._speak([first], session, start, extract_ms, fast_first=True, text=initial_text, more=remaining_chunks)
+        read = initial_text if dedup and self.settings.dedup_enabled else None
+        return self._speak([first], session, start, extract_ms, fast_first=True, text=initial_text, more=remaining_chunks, read=read)
 
     # ---- speaking ---------------------------------------------------------------------
 
@@ -215,8 +219,10 @@ class Narrator:
         fast_first: bool,
         text: str,
         more: Callable[[], list[str]] | None = None,
+        read: str | None = None,
     ) -> NarrationResult:
-        """Synthesize and start the first chunk now; synthesize and queue the rest in the background."""
+        """Synthesize and start the first chunk now; synthesize and queue the rest in the background.
+        `read` is remembered for dedup once audio actually starts."""
         if not chunks:
             return NarrationResult("skipped", "Nothing to say", 0, text)
 
@@ -232,18 +238,25 @@ class Narrator:
 
         self._publish_plan(session, chunks, final=more is None)
         self.player.play(audio, session.id, chunks[0])
+        if read is not None:
+            self.deduper.remember(read)
         self._remember(session, audio, chunks[0])
         timings = Timings(extract_ms, tts_ms, self._ms_since(start))
 
         if len(chunks) > 1 or more is not None:
             self._spawn(lambda: self._continue(session, chunks, more))
+        else:
+            self._audio_complete(session)
         return NarrationResult("played", "Narration started", len(text), text, timings)
 
     def _continue(self, session: Session, planned: list[str], more: Callable[[], list[str]] | None) -> None:
         """Speak planned[1:] (planned[0] is already playing), plus whatever `more` adds."""
         chunks = planned[1:]
         try:
-            if more is not None and not session.cancelled:
+            if more is not None:
+                if session.cancelled:
+                    logger.info("event=continuation_cancelled session=%s remaining=unknown", session.id)
+                    return
                 extra = more()
                 chunks = chunks + extra
                 self._publish_plan(session, planned + extra, final=True)
@@ -261,6 +274,7 @@ class Narrator:
                     return
                 self._remember(session, audio, chunk)
             logger.info("event=continuation_completed session=%s chunks=%s", session.id, len(chunks))
+            self._audio_complete(session)
         except Exception as exc:  # noqa: BLE001
             logger.warning("event=continuation_failed session=%s error=%s", session.id, exc)
 
@@ -286,7 +300,7 @@ class Narrator:
             return f"No narrative text found ({dropped_reason})" if dropped_reason else "No narrative text found"
         if len(text) < self.settings.min_block_chars:
             return f"Text too short to narrate ({len(text)} chars)"
-        if dedup and self.settings.dedup_enabled and self.deduper.seen_recently(text):
+        if dedup and self.settings.dedup_enabled and self.deduper.is_repeat(text):
             return "Already read this text"
         return None
 
@@ -300,6 +314,13 @@ class Narrator:
         if self.on_audio is not None:
             try:
                 self.on_audio(session.id, audio, text, self.speech.output_format)
+            except Exception:  # noqa: BLE001
+                logger.exception("event=audio_callback_failed")
+
+    def _audio_complete(self, session: Session) -> None:
+        if self.on_audio_complete is not None:
+            try:
+                self.on_audio_complete(session.id)
             except Exception:  # noqa: BLE001
                 logger.exception("event=audio_callback_failed")
 

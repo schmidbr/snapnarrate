@@ -198,3 +198,38 @@ def test_second_read_used_when_more_text_is_likely(player: AudioPlayer) -> None:
     assert vision.full_calls == 1
     assert said.count("caravan crossed") == 1  # the opening is not repeated
     assert "elder waited" in said and "Farewell." in said
+
+
+# ---- regressions from the code review ------------------------------------------------------
+
+
+def test_text_that_failed_to_speak_can_be_retried(player: AudioPlayer) -> None:
+    for speech_first in (False, True):
+        vision = FakeVision(ExtractResult(PASSAGE), first=ExtractResult(PASSAGE, more_text_likely=False))
+        speech = FakeSpeech(fail_times=3)  # every attempt of the first try times out
+        narrator = make(vision, speech, player, retry_count=2, speech_first_enabled=speech_first)
+        assert narrator.narrate(b"img", Session(1)).status == "failed"
+        assert narrator.narrate(b"img", Session(2)).played  # same screen again: not "already read"
+        assert narrator.narrate(b"img", Session(3)).message == "Already read this text"
+
+
+def test_text_cancelled_before_speaking_is_not_marked_read(player: AudioPlayer) -> None:
+    narrator = make(FakeVision(ExtractResult(PASSAGE)), FakeSpeech(), player)
+    stopped = Session(1)
+    stopped.cancel()  # Stop pressed while the screen was still being read
+    assert narrator.narrate(b"img", stopped).status == "cancelled"
+    assert narrator.narrate(b"img", Session(2)).played
+
+
+def test_audio_is_complete_only_once_the_whole_passage_is_queued(player: AudioPlayer) -> None:
+    complete: list[int] = []
+    narrator = make(FakeVision(ExtractResult(LONG)), FakeSpeech(), player, initial_chunk_chars=100, followup_chunk_chars=120)
+    narrator.on_audio_complete = complete.append
+    narrator.narrate(b"img", Session(1))
+    assert complete == [1]
+
+    session = Session(2)
+    speech = FakeSpeech(before=lambda _text: session.cancel() if len(speech.calls) == 1 else None)
+    narrator.speech = speech
+    narrator.narrate(b"img", session, dedup=False)  # Stop pressed during the tail
+    assert complete == [1]

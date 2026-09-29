@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import logging
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from typing import Any
 
 from snap_narrate.addons import AddonContext, AddonHost
 from snap_narrate.config import AppConfig, ConfigStore, missing_required
@@ -40,6 +42,9 @@ class App:
         self.history: History | None = None
         self._hotkeys_paused = False
         self._hotkey_errors: dict[str, str | None] = {}
+        self._hotkey_lock = threading.RLock()
+        # Pause/resume requests from the settings window run here, one at a time and in order.
+        self._hotkey_ops = ThreadPoolExecutor(max_workers=1, thread_name_prefix="snapnarrate-hotkey-ops")
 
     # ---- lifecycle --------------------------------------------------------------------
 
@@ -51,11 +56,15 @@ class App:
 
         enable_dpi_awareness()
         self.store.ensure_exists()
-        cfg = self.store.load()
+        cfg = self.store.load(mark_seen=True)
         setup_logging(cfg.log_path)
         logger.info("event=app_starting version=%s config=%s", get_app_version(), self.store.path)
         for warning in cfg.warnings:
             logger.warning("event=config_warning %s", warning)
+        try:
+            self.startup.migrate_legacy()
+        except Exception:  # noqa: BLE001
+            logger.exception("event=legacy_startup_migration_failed")
 
         from snap_narrate.ui.region import select_region
         from snap_narrate.ui.tk_thread import TkThread
@@ -103,6 +112,7 @@ class App:
 
     def _shutdown(self) -> None:
         logger.info("event=app_stopping")
+        self._hotkey_ops.shutdown(wait=False, cancel_futures=True)
         for step in (self.addons.stop, self.hotkeys.stop, self.engine.close, self.tray.stop, self.ui.stop):
             try:
                 step()
@@ -116,15 +126,16 @@ class App:
         self.engine.configure(cfg)
         if self.history is not None:
             self.history.configure(cfg.history.max_items, cfg.history.enabled)
-        self._bind_hotkeys(cfg)
+        with self._hotkey_lock:
+            self.cfg = cfg  # before binding, so resuming after a paused bind uses the new shortcuts
+            self._bind_hotkeys(cfg)
         for error in self.addons.restart(cfg):
             self.bus.notice(error, "warning")
-        self.cfg = cfg
         logger.info("event=config_applied")
 
     def reload(self) -> None:
         try:
-            self.apply_config(self.store.load())
+            self.apply_config(self.store.load(mark_seen=True))
             self.bus.notice("Settings reloaded")
         except Exception as exc:  # noqa: BLE001
             logger.exception("event=config_reload_failed")
@@ -143,25 +154,40 @@ class App:
         return {name: binding for name, binding in shortcuts.items() if binding[0]}
 
     def _bind_hotkeys(self, cfg: AppConfig) -> None:
-        if self._hotkeys_paused:
-            return
-        self._hotkey_errors = self.hotkeys.bind(self._shortcuts(cfg))  # type: ignore[arg-type]
-        failed = [f"{name}: {error}" for name, error in self._hotkey_errors.items() if error]
+        with self._hotkey_lock:
+            if self._hotkeys_paused:
+                return
+            self._hotkey_errors = self.hotkeys.bind(self._shortcuts(cfg))  # type: ignore[arg-type]
+            failed = [f"{name}: {error}" for name, error in self._hotkey_errors.items() if error]
         if failed:
             self.bus.notice("Some shortcuts could not be set. " + "; ".join(failed), "warning")
 
     def pause_hotkeys(self, paused: bool) -> None:
         """While Settings records a new shortcut, release ours so pressing it there is harmless."""
-        self._hotkeys_paused = paused
-        if paused:
-            self.hotkeys.bind({})
-        else:
-            self._bind_hotkeys(self.cfg)
+        with self._hotkey_lock:
+            self._hotkeys_paused = paused
+            if paused:
+                self.hotkeys.bind({})
+            else:
+                self._bind_hotkeys(self.cfg)
+
+    def request_hotkey_pause(self, paused: bool) -> None:
+        """pause_hotkeys without blocking the caller (the Tk thread). Requests run in the
+        order they were made, so a quick pause-then-resume can't end up paused."""
+        self._hotkey_ops.submit(self.pause_hotkeys, paused)
 
     def set_volume(self, volume: float) -> None:
-        applied = self.engine.set_volume(volume)
+        applied = round(self.engine.set_volume(volume), 2)
         self.cfg.playback.volume = applied
-        self.store.update({"playback.volume": round(applied, 2)})
+        self.store.update({"playback.volume": applied})
+        self._sync_settings_window({"playback.volume": applied})
+
+    def _sync_settings_window(self, changes: dict[str, Any]) -> None:
+        """Show a change made from the tray or a hotkey in an open settings window, so its
+        next Save doesn't write the old value back."""
+        window = self._settings
+        if window is not None:
+            self.ui.submit(window.apply_external, changes)  # type: ignore[attr-defined]
 
     def nudge_volume(self, delta: float) -> None:
         self.set_volume(round(self.engine.volume + delta, 2))
@@ -188,6 +214,7 @@ class App:
     def set_capture_mode(self, mode: str) -> None:
         self.engine.set_capture_mode(mode)
         self.store.update({"capture.mode": mode})  # our own write: not treated as an external edit
+        self._sync_settings_window({"capture.mode": mode})
 
     def open_settings(self, page: str = "home") -> None:
         def closed() -> None:
@@ -205,7 +232,7 @@ class App:
                 app_running=lambda: True,
                 test_voice=self.test_voice,
                 run_self_test=self.run_self_test,
-                pause_hotkeys=lambda paused: threading.Thread(target=self.pause_hotkeys, args=(paused,), daemon=True).start(),
+                pause_hotkeys=self.request_hotkey_pause,
                 set_volume=self.engine.set_volume,  # live preview; saving persists it
                 history=self.history,
                 replay=self.replay,

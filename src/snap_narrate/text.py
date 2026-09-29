@@ -29,16 +29,24 @@ class TextDeduper:
         self._last_text = ""
         self._last_hash = ""
 
-    def seen_recently(self, text: str) -> bool:
-        normalized = normalize_text(text)
-        text_hash = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
-        previous_hash, previous_text = self._last_hash, self._last_text
-        self._last_hash, self._last_text = text_hash, normalized
-        if not previous_hash:
+    def is_repeat(self, text: str) -> bool:
+        """True if text matches what was last remembered. Doesn't change what is remembered."""
+        if not self._last_hash:
             return False
-        if text_hash == previous_hash:
+        normalized = normalize_text(text)
+        if _digest(normalized) == self._last_hash:
             return True
-        return SequenceMatcher(None, normalized, previous_text).ratio() >= self.similarity_threshold
+        return SequenceMatcher(None, normalized, self._last_text).ratio() >= self.similarity_threshold
+
+    def remember(self, text: str) -> None:
+        """Mark text as read. Call once it is actually being spoken, so a failed or cancelled
+        narration can be retried."""
+        self._last_text = normalize_text(text)
+        self._last_hash = _digest(self._last_text)
+
+
+def _digest(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def head_chunk(text: str, max_chars: int) -> str:

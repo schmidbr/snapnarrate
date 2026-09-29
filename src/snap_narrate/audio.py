@@ -140,9 +140,9 @@ class AudioPlayer:
     def volume(self, value: float) -> None:
         self._volume = min(max(float(value), MIN_VOLUME), MAX_VOLUME)
 
-    def play(self, audio: bytes, session: int, text: str = "") -> None:
+    def play(self, audio: bytes, session: int, text: str = "", output_format: str | None = None) -> None:
         """Interrupt anything playing and start `session` with this chunk."""
-        samples, rate = decode_audio(audio, self.output_format)
+        samples, rate = decode_audio(audio, output_format or self.output_format)
         with self._cond:
             self._session = session
             self._queue.clear()
@@ -150,11 +150,11 @@ class AudioPlayer:
             self._next_index = 1
             self._cond.notify_all()
 
-    def queue(self, audio: bytes, session: int, text: str = "") -> bool:
+    def queue(self, audio: bytes, session: int, text: str = "", output_format: str | None = None) -> bool:
         """Append to `session` if it is still current. Returns False if it was dropped."""
         if session != self._session:
             return False
-        samples, rate = decode_audio(audio, self.output_format)
+        samples, rate = decode_audio(audio, output_format or self.output_format)
         with self._cond:
             if session != self._session:
                 return False

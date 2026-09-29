@@ -109,3 +109,27 @@ def test_status_and_event_stream(api) -> None:  # noqa: ANN001
     assert response.readline() == b"event: speech.chunk\n"
     assert json.loads(response.readline()[len(b"data: ") :])["data"]["text"] == "Hi there"
     conn.close()
+
+
+def test_history_and_replay_endpoints(tmp_path: Path) -> None:
+    from snap_narrate.history import History, HistoryEntry
+
+    cfg = AppConfig()
+    cfg.api.port = 0
+    engine, bus = FakeEngine(), EventBus()
+    replayed: list = []
+    engine.replay = replayed.append  # type: ignore[attr-defined]
+    history = History(None)
+    history._entries = [HistoryEntry(id="b", time=2, source="api", text="Newest"), HistoryEntry(id="a", time=1, source="api", text="Older")]
+    server = LocalApi()
+    server.start(AddonContext(engine=engine, bus=bus, config=cfg, ui=None, data_dir=tmp_path, history=history))  # type: ignore[arg-type]
+    try:
+        token = (tmp_path / "api_token.txt").read_text(encoding="utf-8")
+        status, body = request(server.port, "GET", "/v1/history?limit=1", token)
+        assert status == 200 and [e["text"] for e in json.loads(body)["entries"]] == ["Newest"]
+        assert request(server.port, "POST", "/v1/replay", token)[0] == 202
+        assert request(server.port, "POST", "/v1/replay", token, b'{"id": "a"}')[0] == 202
+        assert [e.id for e in replayed] == ["b", "a"]
+        assert request(server.port, "POST", "/v1/replay", token, b'{"id": "zzz"}')[0] == 400
+    finally:
+        server.stop()

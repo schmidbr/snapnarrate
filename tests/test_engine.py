@@ -134,3 +134,41 @@ def test_stop_cancels_live_session(engine_parts) -> None:  # noqa: ANN001
     engine.stop_speaking()
     assert session is not None and session.cancelled
     assert engine.player.session == 0
+
+
+def test_replay_uses_cached_audio_without_new_speech(engine_parts) -> None:  # noqa: ANN001
+    from snap_narrate.history import HistoryEntry
+
+    engine, seen, _vision, speech, _capturer = engine_parts
+    engine.capture_fullscreen()
+    session = finished(seen).data["session"]
+    calls_before = len(speech.calls)
+    entry = HistoryEntry(id="x", time=0, source="hotkey", text=TEXT, run_id=engine.run_id, session=session)
+    result = engine.replay(entry).result(timeout=2)
+    assert result.played and result.message == "Replaying"
+    assert len(speech.calls) == calls_before  # no new ElevenLabs request
+
+
+def test_replay_from_an_older_run_voices_the_text_again(engine_parts) -> None:  # noqa: ANN001
+    from snap_narrate.history import HistoryEntry
+
+    engine, _seen, _vision, speech, _capturer = engine_parts
+    entry = HistoryEntry(id="y", time=0, source="hotkey", text="An old passage from yesterday, read aloud again.", run_id="old-run", session=1)
+    assert engine.replay(entry).result(timeout=2).played
+    assert speech.calls and speech.calls[0][0].startswith("An old passage")
+
+
+def test_history_records_a_real_capture_and_replays_it(engine_parts, tmp_path) -> None:  # noqa: ANN001
+    from snap_narrate.history import History
+
+    engine, seen, _vision, speech, _capturer = engine_parts
+    history = History(tmp_path / "history.json")
+    history.run_id = engine.run_id
+    history.attach(engine.bus)
+    engine.capture_fullscreen()
+    finished(seen)
+    entry = history.latest()
+    assert entry is not None and entry.text.startswith("The lantern flickered") and entry.trigger == "Full screen"
+    calls = len(speech.calls)
+    assert engine.replay(entry).result(timeout=2).played
+    assert len(speech.calls) == calls and len(history.entries()) == 1  # free replay, not re-recorded

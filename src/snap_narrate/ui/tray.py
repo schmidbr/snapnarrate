@@ -93,6 +93,7 @@ class Tray:
             MenuItem(lambda _: "Read Screen" + _shortcut(cfg().capture.hotkey), lambda: engine().capture("tray")),
             MenuItem(lambda _: "Read Region" + _shortcut(cfg().capture.region_hotkey), lambda: engine().capture_region("tray")),
             MenuItem(lambda _: "Stop Speaking" + _shortcut(cfg().capture.stop_hotkey), lambda: engine().stop_speaking()),
+            MenuItem(lambda _: "Replay Last" + _shortcut(cfg().capture.replay_hotkey), lambda: app.replay_last()),
             Menu.SEPARATOR,
             MenuItem("Volume", Menu(lambda: (volume_item(level) for level in VOLUME_PRESETS))),
             MenuItem(
@@ -107,6 +108,7 @@ class Tray:
             MenuItem("Pause Reading", lambda: engine().toggle_pause(), checked=lambda _: engine().paused),
             Menu.SEPARATOR,
             MenuItem("Open SnapNarrate…", lambda: app.open_settings(), default=True),
+            MenuItem("History…", lambda: app.open_settings("history")),
             MenuItem(
                 "Tools",
                 Menu(

@@ -21,6 +21,7 @@ from snap_narrate.events import EventBus
 
 if TYPE_CHECKING:
     from snap_narrate.engine import Engine
+    from snap_narrate.history import History
     from snap_narrate.ui.tk_thread import TkThread
 
 logger = logging.getLogger("snap_narrate")
@@ -35,6 +36,7 @@ class AddonContext:
     config: AppConfig
     ui: "TkThread | None"  # create Tk windows only through ui.submit(...)
     data_dir: Path
+    history: "History | None" = None
 
 
 class Addon(Protocol):

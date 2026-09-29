@@ -13,6 +13,7 @@ with a high-fidelity ElevenLabs voice. Keep playing instead of stopping to read.
 - **Smart filtering:** skips HUD, menus, and short labels, and doesn't re-read text it just read.
 - **Subtitle overlay (optional):** shows the line being spoken over your game, with a segmented progress bar for the whole passage.
 - **Local control API (optional):** lets widgets, overlays, Stream Deck buttons, or scripts trigger captures and receive live events. See [docs/ADDONS.md](docs/ADDONS.md).
+- **History:** every passage read is saved on your PC. Search it, replay it (instant and free for recent passages), or copy the text. A Replay last shortcut is optional.
 - **Narration volume:** set it independently of the Windows volume, so you can turn a quiet game up without the voice getting too loud. Use the slider, the tray's Volume menu, or optional shortcuts.
 - **Modern app window:** a Windows 11 look with light and dark themes, a voice picker that shows names and plays free samples, and a shortcut recorder.
 - **Tray menu:** read screen or region, stop, volume, capture mode, pause, and tools. Double-click the icon to open SnapNarrate.
@@ -45,6 +46,7 @@ The install folder also contains `snapnarrate-cli.exe`. When running from source
 | `snapnarrate-cli voices` | List your ElevenLabs voices |
 | `snapnarrate-cli self-test` | Read and speak a built-in sample page |
 | `snapnarrate-cli test-capture` | Capture once and print the extracted text |
+| `snapnarrate-cli history [--limit N]` | Recently narrated text |
 | `snapnarrate-cli usage [--json]` | OpenAI usage and ElevenLabs credits |
 | `snapnarrate-cli startup --enable/--disable` | Run at sign-in |
 | `snapnarrate-cli config path` | Show which config file is in use |

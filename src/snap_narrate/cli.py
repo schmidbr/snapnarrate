@@ -39,6 +39,9 @@ def build_parser() -> argparse.ArgumentParser:
     group = startup.add_mutually_exclusive_group()
     group.add_argument("--enable", action="store_true")
     group.add_argument("--disable", action="store_true")
+    history = command("history", "show recently narrated text")
+    history.add_argument("--limit", type=int, default=10)
+    history.add_argument("--json", action="store_true", dest="as_json")
     usage = command("usage", "show OpenAI usage and ElevenLabs credits")
     usage.add_argument("--json", action="store_true", dest="as_json")
     sub.add_parser("version", help="print the version")
@@ -259,6 +262,25 @@ def cmd_usage(args: argparse.Namespace) -> int:
     return 0 if ok else 1
 
 
+def cmd_history(args: argparse.Namespace) -> int:
+    from dataclasses import asdict
+
+    from snap_narrate.history import History, format_when
+
+    cfg = load_config(_config_path(args))
+    entries = History(cfg.history_path, max_items=1000).entries()[: max(1, args.limit)]
+    if args.as_json:
+        print(json.dumps([asdict(entry) for entry in entries], indent=2, ensure_ascii=False))
+        return 0
+    if not entries:
+        print("No narrations yet.")
+    for entry in entries:
+        print(f"{format_when(entry.time)}  ·  {entry.trigger}")
+        print("  " + entry.text.replace("\n", "\n  "))
+        print()
+    return 0
+
+
 def cmd_config(args: argparse.Namespace) -> int:
     path = _config_path(args)
     if args.config_command == "path":
@@ -278,6 +300,7 @@ COMMANDS: dict[str, Callable[[argparse.Namespace], int]] = {
     "self-test": cmd_self_test,
     "startup": cmd_startup,
     "usage": cmd_usage,
+    "history": cmd_history,
     "config": cmd_config,
     "version": lambda _args: print(f"SnapNarrate {get_app_version()}") or 0,
 }

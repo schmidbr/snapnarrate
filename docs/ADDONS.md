@@ -27,6 +27,8 @@ Every request needs the token from `%APPDATA%\SnapNarrate\api_token.txt`, sent i
 | `POST /v1/pause` | `{"paused": true \| false}` (omit to toggle) | Pause or resume hotkey captures |
 | `POST /v1/speak` | `{"text": "..."}` | Speak the given text with the configured voice |
 | `POST /v1/narrate-image` | raw PNG or JPEG, `Content-Type: image/png` or `image/jpeg` | Read your own screenshot (for example one taken by a widget) |
+| `GET /v1/history?limit=20` | none | Recent narrations, newest first: `id`, `time`, `source`, `text` |
+| `POST /v1/replay` | `{"id": "..."}` (optional) | Replay a history entry, or the latest one if no id is given |
 | `GET /v1/events` | none | Server-Sent Events stream of everything below |
 
 Commands return `202` right away. Follow progress on the event stream.

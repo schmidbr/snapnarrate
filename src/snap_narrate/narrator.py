@@ -118,6 +118,8 @@ class Narrator:
         self._sleep = sleep_fn
         self._now = time_fn
         self._spawn = spawn
+        # on_audio(session_id, audio, text, output_format) for every chunk handed to the player.
+        self.on_audio: Callable[[int, bytes, str, str], None] | None = None
 
     # ---- public API -------------------------------------------------------------------
 
@@ -230,6 +232,7 @@ class Narrator:
 
         self._publish_plan(session, chunks, final=more is None)
         self.player.play(audio, session.id, chunks[0])
+        self._remember(session, audio, chunks[0])
         timings = Timings(extract_ms, tts_ms, self._ms_since(start))
 
         if len(chunks) > 1 or more is not None:
@@ -256,6 +259,7 @@ class Narrator:
                 if not self.player.queue(audio, session.id, chunk):
                     logger.info("event=continuation_dropped session=%s", session.id)
                     return
+                self._remember(session, audio, chunk)
             logger.info("event=continuation_completed session=%s chunks=%s", session.id, len(chunks))
         except Exception as exc:  # noqa: BLE001
             logger.warning("event=continuation_failed session=%s error=%s", session.id, exc)
@@ -291,6 +295,13 @@ class Narrator:
         first = head_chunk(text, self.settings.initial_chunk_chars)
         rest = remaining_after(text, first) if first else text
         return [first, *followup_chunks(rest, self.settings.followup_chunk_chars, 1)] if first else []
+
+    def _remember(self, session: Session, audio: bytes, text: str) -> None:
+        if self.on_audio is not None:
+            try:
+                self.on_audio(session.id, audio, text, self.speech.output_format)
+            except Exception:  # noqa: BLE001
+                logger.exception("event=audio_callback_failed")
 
     def _publish_plan(self, session: Session, chunks: list[str], final: bool) -> None:
         if self.bus is not None:

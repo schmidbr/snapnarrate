@@ -13,6 +13,7 @@ import logging
 import queue
 import secrets
 import threading
+from dataclasses import asdict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -128,6 +129,10 @@ class _Handler(BaseHTTPRequestHandler):
         route = self._route()
         if route == "/v1/status":
             self._send_json(200, {"version": get_app_version(), **self.ctx.engine.status()})
+        elif route == "/v1/history":
+            limit = int(parse_qs(urlparse(self.path).query).get("limit", ["20"])[0] or 20)
+            entries = self.ctx.history.entries()[: max(1, min(limit, 1000))] if self.ctx.history else []
+            self._send_json(200, {"entries": [asdict(entry) for entry in entries]})
         elif route == "/v1/events":
             self._stream_events()
         else:
@@ -160,6 +165,13 @@ class _Handler(BaseHTTPRequestHandler):
                 if not text:
                     raise ValueError("text is required")
                 engine.speak(text, "api")
+            elif route == "/v1/replay":
+                history = self.ctx.history
+                entry_id = self._json_body().get("id")
+                entry = (history.get(entry_id) if entry_id else history.latest()) if history else None
+                if entry is None:
+                    raise ValueError("no such history entry" if entry_id else "history is empty")
+                engine.replay(entry)
             elif route == "/v1/narrate-image":
                 if not (self.headers.get("Content-Type") or "").startswith(("image/png", "image/jpeg")):
                     raise ValueError("Content-Type must be image/png or image/jpeg")

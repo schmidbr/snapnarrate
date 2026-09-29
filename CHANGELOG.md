@@ -4,6 +4,15 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-09-28
+
+### Added
+
+- **Narration history.** Every passage SnapNarrate reads is saved on this PC, newest first, with when and how it was captured. The new History page lets you search, expand, **replay**, copy or delete passages, or clear them all. You can turn history off or set how many passages to keep (default 100). Voice tests and self-tests aren't recorded.
+- **Free, instant replay.** The last 10 narrations of the current session replay from their saved audio, with no new ElevenLabs request. Older passages are voiced again.
+- **Replay last:** a tray menu item and an optional shortcut (unset by default), plus History… in the tray menu.
+- `snapnarrate history [--limit N] [--json]` on the command line, and `GET /v1/history` and `POST /v1/replay` in the local API.
+
 ## [0.6.1] - 2026-09-28
 
 ### Fixed

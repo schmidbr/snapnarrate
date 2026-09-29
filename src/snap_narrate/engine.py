@@ -10,6 +10,8 @@ from __future__ import annotations
 import logging
 import threading
 import time
+import uuid
+from collections import OrderedDict
 from concurrent.futures import Future
 from dataclasses import dataclass
 from typing import Any, Callable
@@ -23,12 +25,14 @@ from snap_narrate.narrator import NarrationResult, Narrator, NarratorSettings, S
 
 logger = logging.getLogger("snap_narrate")
 
+REPLAY_CACHE_SESSIONS = 10  # narrations whose audio is kept in memory for free, instant replay
+
 RegionPicker = Callable[[], "Bounds | None"]
 
 
 @dataclass
 class _Job:
-    kind: str  # "image" | "text"
+    kind: str  # "image" | "text" | "replay"
     payload: Any
     source: str
     dedup: bool = True
@@ -64,6 +68,8 @@ class Engine:
         self._paused = False
         self._state = "idle"
         self._region_busy = False
+        self.run_id = uuid.uuid4().hex[:12]  # identifies this app run in history entries
+        self._audio: OrderedDict[int, list[tuple[bytes, str, str]]] = OrderedDict()
 
         self.player = player or AudioPlayer(
             cfg.elevenlabs.output_format,
@@ -87,6 +93,7 @@ class Engine:
             debug_dir=cfg.screenshot_dir if cfg.debug.save_screenshots else None,
         )
         narrator = self._narrator_factory(cfg, self.player, self.bus)
+        narrator.on_audio = self._remember_audio
         with self._lock:
             previous = getattr(self, "narrator", None)
             if previous is not None and previous.settings.dedup_similarity_threshold == narrator.settings.dedup_similarity_threshold:
@@ -158,6 +165,22 @@ class Engine:
     def speak(self, text: str, source: str = "api") -> Future[NarrationResult]:
         """Speak text directly, skipping extraction."""
         return self._submit(_Job("text", text, source))
+
+    def replay(self, entry: Any) -> Future[NarrationResult]:
+        """Play a history entry again: its cached audio if this run still has it (free,
+        instant), otherwise voice its text again."""
+        with self._lock:
+            chunks = list(self._audio.get(entry.session, [])) if entry.run_id == self.run_id else []
+        if chunks:
+            return self._submit(_Job("replay", chunks, "replay"))
+        return self.speak(entry.text, "replay")
+
+    def _remember_audio(self, session_id: int, audio: bytes, text: str, output_format: str) -> None:
+        with self._lock:
+            self._audio.setdefault(session_id, []).append((audio, text, output_format))
+            self._audio.move_to_end(session_id)
+            while len(self._audio) > REPLAY_CACHE_SESSIONS:
+                self._audio.popitem(last=False)
 
     def stop_speaking(self) -> None:
         with self._lock:
@@ -278,6 +301,8 @@ class Engine:
         try:
             if job.kind == "text":
                 result = narrator.speak_text(str(job.payload), session)
+            elif job.kind == "replay":
+                result = self._play_cached(job.payload, session)
             else:
                 result = narrator.narrate(job.payload, session, self.profile, dedup=job.dedup)
         except Exception as exc:  # noqa: BLE001
@@ -310,6 +335,15 @@ class Engine:
         if self._state != "speaking":
             self._set_state("speaking" if self.player.is_playing else "idle")
         self._resolve(job, result)
+
+    def _play_cached(self, chunks: list[tuple[bytes, str, str]], session: Session) -> NarrationResult:
+        self.bus.publish(events.NARRATION_PLAN, session=session.id, chunk_chars=[len(text) for _, text, _ in chunks], final=True)
+        first_audio, first_text, first_format = chunks[0]
+        self.player.play(first_audio, session.id, first_text, output_format=first_format)
+        for audio, text, output_format in chunks[1:]:
+            self.player.queue(audio, session.id, text, output_format=output_format)
+        text = " ".join(text for _, text, _ in chunks)
+        return NarrationResult("played", "Replaying", len(text), text)
 
     @staticmethod
     def _resolve(job: _Job, result: NarrationResult) -> None:

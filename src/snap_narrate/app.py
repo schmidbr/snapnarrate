@@ -10,6 +10,7 @@ from snap_narrate.addons import AddonContext, AddonHost
 from snap_narrate.config import AppConfig, ConfigStore, missing_required
 from snap_narrate.engine import Engine
 from snap_narrate.events import EventBus
+from snap_narrate.history import History
 from snap_narrate.hotkeys import HotkeyManager
 from snap_narrate.logs import setup_logging
 from snap_narrate.paths import user_data_dir
@@ -36,6 +37,7 @@ class App:
         self.startup = StartupManager(config_path)
         self._exit = threading.Event()
         self._settings: object | None = None
+        self.history: History | None = None
         self._hotkeys_paused = False
         self._hotkey_errors: dict[str, str | None] = {}
 
@@ -68,6 +70,9 @@ class App:
             play_sound=play_capture_sound,
         )
         self.cfg = cfg
+        self.history = History(cfg.history_path, cfg.history.max_items, cfg.history.enabled)
+        self.history.run_id = self.engine.run_id
+        self.history.attach(self.bus)
         self.hotkeys = HotkeyManager()
         self.tray = Tray(self)
         self.tray.start()
@@ -109,6 +114,8 @@ class App:
     def apply_config(self, cfg: AppConfig) -> None:
         setup_logging(cfg.log_path)
         self.engine.configure(cfg)
+        if self.history is not None:
+            self.history.configure(cfg.history.max_items, cfg.history.enabled)
         self._bind_hotkeys(cfg)
         for error in self.addons.restart(cfg):
             self.bus.notice(error, "warning")
@@ -129,6 +136,7 @@ class App:
             "Read screen": (cfg.capture.hotkey, lambda: engine.capture("hotkey")),
             "Read region": (cfg.capture.region_hotkey, lambda: engine.capture_region("hotkey")),
             "Stop speaking": (cfg.capture.stop_hotkey, engine.stop_speaking),
+            "Replay last": (cfg.capture.replay_hotkey, self.replay_last),
             "Narration louder": (cfg.capture.volume_up_hotkey, lambda: self.nudge_volume(0.1)),
             "Narration quieter": (cfg.capture.volume_down_hotkey, lambda: self.nudge_volume(-0.1)),
         }
@@ -158,8 +166,22 @@ class App:
     def nudge_volume(self, delta: float) -> None:
         self.set_volume(round(self.engine.volume + delta, 2))
 
+    def replay_last(self) -> None:
+        entry = self.history.latest() if self.history is not None else None
+        if entry is None:
+            self.bus.notice("Nothing to replay yet")
+            return
+        self.engine.replay(entry)
+
+    def replay(self, entry_id: str) -> None:
+        entry = self.history.get(entry_id) if self.history is not None else None
+        if entry is not None:
+            self.engine.replay(entry)
+
     def _addon_context(self, cfg: AppConfig) -> AddonContext:
-        return AddonContext(engine=self.engine, bus=self.bus, config=cfg, ui=self.ui, data_dir=user_data_dir())
+        return AddonContext(
+            engine=self.engine, bus=self.bus, config=cfg, ui=self.ui, data_dir=user_data_dir(), history=self.history
+        )
 
     # ---- tray actions -----------------------------------------------------------------
 
@@ -185,6 +207,8 @@ class App:
                 run_self_test=self.run_self_test,
                 pause_hotkeys=lambda paused: threading.Thread(target=self.pause_hotkeys, args=(paused,), daemon=True).start(),
                 set_volume=self.engine.set_volume,  # live preview; saving persists it
+                history=self.history,
+                replay=self.replay,
             )
             self._settings = SettingsWindow(
                 self.ui.root, self.store, on_saved=self._settings_saved, on_closed=closed,

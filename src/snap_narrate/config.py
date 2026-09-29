@@ -100,6 +100,7 @@ class CaptureConfig:
     # Optional; empty = not bound.
     volume_up_hotkey: str = ""
     volume_down_hotkey: str = ""
+    replay_hotkey: str = ""
     mode: str = "fullscreen"
     sound_name: str = DEFAULT_CAPTURE_SOUND_NAME
     cooldown_ms: int = 1500
@@ -155,6 +156,12 @@ class AddonsConfig:
 
 
 @dataclass
+class HistoryConfig:
+    enabled: bool = True
+    max_items: int = 100
+
+
+@dataclass
 class DebugConfig:
     save_screenshots: bool = False
     screenshot_dir: str = "debug_screenshots"
@@ -181,6 +188,7 @@ class AppConfig:
     hud: HudConfig = field(default_factory=HudConfig)
     api: ApiConfig = field(default_factory=ApiConfig)
     addons: AddonsConfig = field(default_factory=AddonsConfig)
+    history: HistoryConfig = field(default_factory=HistoryConfig)
     debug: DebugConfig = field(default_factory=DebugConfig)
     usage: UsageConfig = field(default_factory=UsageConfig)
 
@@ -203,6 +211,10 @@ class AppConfig:
     @property
     def screenshot_dir(self) -> Path:
         return self.resolve_path(self.debug.screenshot_dir)
+
+    @property
+    def history_path(self) -> Path:
+        return self.resolve_path("history.json")
 
     def get(self, dotted: str) -> Any:
         target: Any = self
@@ -331,6 +343,7 @@ def _normalize(cfg: AppConfig) -> None:
     cfg.playback.followup_chunk_chars = max(cfg.playback.followup_chunk_chars, cfg.playback.initial_chunk_chars)
     cfg.playback.followup_min_chars = max(cfg.playback.followup_min_chars, 20)
     cfg.playback.volume = min(max(cfg.playback.volume, 0.1), 1.5)
+    cfg.history.max_items = min(max(cfg.history.max_items, 1), 1000)
     cfg.hud.font_size = min(max(cfg.hud.font_size, 10), 72)
     cfg.hud.opacity = min(max(cfg.hud.opacity, 0.2), 1.0)
     if not 1024 <= cfg.api.port <= 65535:

@@ -83,6 +83,7 @@ CAPTURE_MODES = [("fullscreen", "Full screen"), ("region", "Region")]
 SOUNDS = [(name, name) for name in WINDOWS_CAPTURE_SOUND_OPTIONS]
 PAGES = [
     ("home", "Home", "home"),
+    ("history", "History", "history"),
     ("voice", "Voice", "voice"),
     ("reading", "Reading", "reading"),
     ("hotkeys", "Hotkeys", "keyboard"),
@@ -94,10 +95,12 @@ HOTKEY_KEYS = [
     "capture.hotkey",
     "capture.region_hotkey",
     "capture.stop_hotkey",
+    "capture.replay_hotkey",
     "capture.volume_up_hotkey",
     "capture.volume_down_hotkey",
 ]
-OPTIONAL_HOTKEYS = {"capture.volume_up_hotkey", "capture.volume_down_hotkey"}
+OPTIONAL_HOTKEYS = {"capture.replay_hotkey", "capture.volume_up_hotkey", "capture.volume_down_hotkey"}
+HISTORY_PAGE_SIZE = 25
 MISSING_TO_PAGE = {
     "ElevenLabs API key": "voice",
     "ElevenLabs voice": "voice",
@@ -118,6 +121,8 @@ class WindowActions:
     run_self_test: Callable[[], None] | None = None
     pause_hotkeys: Callable[[bool], None] | None = None
     set_volume: Callable[[float], None] | None = None
+    history: Any = None  # snap_narrate.history.History; standalone windows read it from disk
+    replay: Callable[[str], None] | None = None  # replay a history entry by id (needs the running app)
 
 
 @lru_cache(maxsize=64)
@@ -180,6 +185,9 @@ class SettingsWindow:
         self._home_job: str | None = None
         self._flash_job: str | None = None
         self._closed = False
+        self._history_shown = 0
+        self._history_version = -1
+        self._history_expanded: set[str] = set()
 
         self.win = ctk.CTkToplevel(master, fg_color=t.WINDOW_BG)
         self.win.title("SnapNarrate")
@@ -197,6 +205,7 @@ class SettingsWindow:
         self.show(page)
         self._refresh_footer()
         self._poll_inbox()
+        self._poll_history()
         self.win.after(50, self._bring_forward)
 
     # ---- plumbing ---------------------------------------------------------------------
@@ -514,6 +523,147 @@ class SettingsWindow:
             self.flash("Starting SnapNarrate…")
             self.win.after(2500, self._refresh_home_status)
 
+    def _page_history(self, body: Any) -> None:
+        top = ctk.CTkFrame(body, fg_color="transparent")
+        top.pack(fill="x", pady=(8, 10))
+        self._history_search = ctk.CTkEntry(
+            top, placeholder_text="Search history", width=320, font=self.fonts.body, fg_color=t.CONTROL_BG,
+            border_color=t.CONTROL_BORDER, border_width=1, corner_radius=4, text_color=t.TEXT,
+        )  # fmt: skip
+        self._history_search.pack(side="left")
+        self._history_search.bind("<KeyRelease>", lambda _e: self._render_history(reset=True))
+        button(top, "Clear history", self._clear_history, self.fonts, icon=t.ICONS["delete"], width=150).pack(side="right")
+        self._history_count = ctk.CTkLabel(top, text="", font=self.fonts.caption, text_color=t.TEXT_SECONDARY)
+        self._history_count.pack(side="right", padx=12)
+
+        self._history_list = ctk.CTkFrame(body, fg_color="transparent")
+        self._history_list.pack(fill="x")
+
+        card = section(body, self.fonts, "History settings")
+        self.add_switch(card, "history.enabled", "Keep a history", "Stored only on this PC, next to your settings")
+        self.add_number(card, "history.max_items", "Remember up to", "", unit="passages")
+        self._render_history(reset=True)
+
+    def _history_entries(self) -> list[Any]:
+        history = self.actions.history
+        if history is None:
+            return []
+        query = self._history_search.get().strip().lower() if hasattr(self, "_history_search") else ""
+        entries = history.entries()
+        return [e for e in entries if not query or query in e.text.lower()] if query else entries
+
+    def _render_history(self, reset: bool = False) -> None:
+        from snap_narrate.history import format_when
+
+        holder = getattr(self, "_history_list", None)
+        if holder is None or not holder.winfo_exists():
+            return
+        if reset:
+            self._history_shown = HISTORY_PAGE_SIZE
+        history = self.actions.history
+        self._history_version = history.version if history is not None else 0
+        for child in holder.winfo_children():
+            child.destroy()
+        entries = self._history_entries()
+        total = len(history.entries()) if history is not None else 0
+        self._history_count.configure(text=f"{len(entries)} of {total}" if len(entries) != total else f"{total} passages")
+
+        if not entries:
+            empty = ctk.CTkFrame(holder, fg_color=t.CARD_BG, border_color=t.CARD_BORDER, border_width=1, corner_radius=6)
+            empty.pack(fill="x")
+            message = "No passages match your search." if total else "Passages SnapNarrate reads will appear here, so you can hear or copy them again."
+            ctk.CTkLabel(empty, text="", image=icon("history", 28, t.TEXT_SECONDARY)).pack(pady=(26, 6))
+            ctk.CTkLabel(empty, text=message, font=self.fonts.body, text_color=t.TEXT_SECONDARY).pack(pady=(0, 26))
+            return
+
+        for entry in entries[: self._history_shown]:
+            self._history_row(holder, entry, format_when(entry.time))
+        if len(entries) > self._history_shown:
+            more = len(entries) - self._history_shown
+            button(holder, f"Show {min(more, HISTORY_PAGE_SIZE)} more", self._more_history, self.fonts, width=160).pack(pady=(8, 0))
+
+    def _history_row(self, parent: Any, entry: Any, when: str) -> None:
+        tile = ctk.CTkFrame(parent, fg_color=t.CARD_BG, border_color=t.CARD_BORDER, border_width=1, corner_radius=6)
+        tile.pack(fill="x", pady=(0, 3))
+        tile.grid_columnconfigure(0, weight=1)
+        expanded = entry.id in self._history_expanded
+        if expanded or len(entry.text) <= 220:
+            preview = entry.text
+        else:
+            preview = entry.text[:220].rsplit(" ", 1)[0].rstrip(".,;: ") + "…"
+        meta = ctk.CTkLabel(tile, text=f"{when}  ·  {entry.trigger}", font=self.fonts.caption, text_color=t.TEXT_SECONDARY, anchor="w", height=18)
+        meta.grid(row=0, column=0, sticky="w", padx=18, pady=(12, 2))
+        text = ctk.CTkLabel(tile, text=preview, font=self.fonts.body, text_color=t.TEXT, anchor="w", justify="left", wraplength=420)
+        text.grid(row=1, column=0, sticky="w", padx=18, pady=(0, 12))
+
+        def fit(event: tk.Event, label: ctk.CTkLabel = text) -> None:
+            # Wrap to the tile's real width, leaving room for the buttons (CTk sizes are pre-scaling).
+            scaling = label._get_widget_scaling()
+            wrap = int(event.width / scaling) - 36 - 130
+            if wrap > 120 and abs(int(label.cget("wraplength")) - wrap) > 4:
+                label.configure(wraplength=wrap)
+
+        tile.bind("<Configure>", fit, add="+")
+        for widget in (tile, meta, text):
+            widget.bind("<Button-1>", lambda _e, i=entry.id: self._toggle_history(i))
+
+        actions = ctk.CTkFrame(tile, fg_color="transparent")
+        actions.grid(row=0, column=1, rowspan=2, padx=(0, 12), sticky="e")
+        if self.actions.replay is not None:
+            self._icon_button(actions, "play", "Replay", lambda i=entry.id: self._replay(i))
+        self._icon_button(actions, "copy", "Copy", lambda e=entry: self._copy_text(e.text))
+        self._icon_button(actions, "delete", "Delete", lambda i=entry.id: self._delete_history(i))
+
+    def _icon_button(self, parent: Any, name: str, tooltip: str, command: Callable[[], None]) -> None:
+        widget = ctk.CTkButton(
+            parent, text="", image=icon(name, 16), width=34, height=34, corner_radius=4, fg_color="transparent",
+            hover_color=t.CONTROL_HOVER, command=command,
+        )  # fmt: skip
+        widget.pack(side="left", padx=1)
+        widget.bind("<Enter>", lambda _e: self._footer_msg.configure(text=tooltip, text_color=t.TEXT_SECONDARY))
+        widget.bind("<Leave>", lambda _e: self._refresh_footer())
+
+    def _toggle_history(self, entry_id: str) -> None:
+        self._history_expanded ^= {entry_id}
+        self._render_history()
+
+    def _more_history(self) -> None:
+        self._history_shown += HISTORY_PAGE_SIZE
+        self._render_history()
+
+    def _replay(self, entry_id: str) -> None:
+        if self.actions.replay is not None:
+            self.actions.replay(entry_id)
+            self.flash("Replaying")
+
+    def _copy_text(self, text: str) -> None:
+        self.win.clipboard_clear()
+        self.win.clipboard_append(text)
+        self.flash("Copied to clipboard")
+
+    def _delete_history(self, entry_id: str) -> None:
+        if self.actions.history is not None:
+            self.actions.history.delete(entry_id)
+            self._render_history()
+
+    def _clear_history(self) -> None:
+        history = self.actions.history
+        if history is None or not history.entries():
+            return
+        if messagebox.askyesno("Clear history?", "Remove every saved passage? This can't be undone.", parent=self.win):
+            history.clear()
+            self._render_history(reset=True)
+            self.flash("History cleared")
+
+    def _poll_history(self) -> None:
+        """Refresh the History page when new passages are read while it's open."""
+        if self._closed:
+            return
+        history = self.actions.history
+        if self._current == "history" and history is not None and history.version != self._history_version:
+            self._render_history()
+        self.win.after(1000, self._poll_history)
+
     def _page_voice(self, body: Any) -> None:
         card = section(body, self.fonts, "ElevenLabs account")
         self.add_text(card, "elevenlabs.api_key", "API key", "Starts with sk_", secret=True, width=320)
@@ -584,6 +734,7 @@ class SettingsWindow:
         self.add_hotkey(card, "capture.hotkey", "Read the screen", "Uses the capture setting below")
         self.add_hotkey(card, "capture.region_hotkey", "Read a region", "Drag a box around the text")
         self.add_hotkey(card, "capture.stop_hotkey", "Stop speaking")
+        self.add_hotkey(card, "capture.replay_hotkey", "Replay last", "Optional · plays the last passage again")
         self.add_hotkey(card, "capture.volume_up_hotkey", "Narration louder", "Optional · 10% per press")
         self.add_hotkey(card, "capture.volume_down_hotkey", "Narration quieter", "Optional · 10% per press")
 
@@ -1044,10 +1195,15 @@ def run_standalone(store: ConfigStore, startup: object | None = None) -> int:
 
         subprocess.Popen(launch_command(store.path), close_fds=True)  # noqa: S603
 
+    from snap_narrate.history import History
+
     root = ctk.CTk()
     root.withdraw()
     store.ensure_exists()
-    SettingsWindow(root, store, startup=startup, on_closed=root.quit, actions=WindowActions(app_running=is_app_running, start_app=start_app))
+    cfg = store.load()
+    history = History(cfg.history_path, cfg.history.max_items, cfg.history.enabled)  # read from disk; replay needs the app
+    actions = WindowActions(app_running=is_app_running, start_app=start_app, history=history)
+    SettingsWindow(root, store, startup=startup, on_closed=root.quit, actions=actions)
     root.mainloop()
     root.destroy()
     return 0

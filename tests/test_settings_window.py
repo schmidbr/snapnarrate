@@ -141,3 +141,37 @@ def test_saving_keeps_lists_as_lists(window) -> None:  # noqa: ANN001
     window.var("addons.extra").set("chat_log, other")
     assert window.save()
     assert window.store.load().addons.extra == ["chat_log", "other"]
+
+
+def test_history_page_lists_replays_copies_and_deletes(tmp_path: Path, root, monkeypatch) -> None:  # noqa: ANN001
+    from snap_narrate.history import History, HistoryEntry
+    from snap_narrate.ui import settings as S
+
+    history = History(tmp_path / "history.json")
+    history._entries = [
+        HistoryEntry(id=str(i), time=time.time() - i, source="hotkey:fullscreen", text=f"Passage number {i}. " * 20)
+        for i in range(30)
+    ]
+    replayed: list[str] = []
+    store = ConfigStore(init_config(tmp_path / "config.toml"))
+    win = S.SettingsWindow(root, store, actions=S.WindowActions(history=history, replay=replayed.append), page="history")
+    win.win.withdraw()
+    try:
+        pump(win, 0.2)
+        assert win._history_count.cget("text") == "30 passages"
+        assert len(win._history_list.winfo_children()) == S.HISTORY_PAGE_SIZE + 1  # rows + "Show more"
+        win._replay("3")
+        assert replayed == ["3"]
+        win._copy_text("hello")
+        assert win.win.clipboard_get() == "hello"
+        win._delete_history("0")
+        assert len(history.entries()) == 29
+        win._history_search.insert(0, "number 7.")
+        win._render_history(reset=True)
+        assert win._history_count.cget("text") == "1 of 29"
+        monkeypatch.setattr(S.messagebox, "askyesno", lambda *a, **k: True)
+        win._clear_history()
+        assert history.entries() == []
+    finally:
+        win._closed = True
+        win.win.destroy()

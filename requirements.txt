@@ -1,9 +1,0 @@
-requests>=2.32.0
-mss>=9.0.1
-Pillow>=10.4.0
-keyboard>=0.13.5
-pystray>=0.19.5
-numpy>=2.2.0
-sounddevice>=0.5.1
-soundfile>=0.13.1
-pytest>=8.3.0

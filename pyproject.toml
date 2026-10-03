@@ -4,31 +4,36 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "snapnarrate"
-version = "0.3.9"
-description = "SnapNarrate game narrator using OpenAI vision and ElevenLabs"
+dynamic = ["version"]
+description = "Read on-screen game text aloud with AI vision and ElevenLabs voices"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-  "requests>=2.32.0",
-  "mss>=9.0.1",
-  "Pillow>=10.4.0",
-  "keyboard>=0.13.5",
+  "requests>=2.32",
+  "mss>=9.0",
+  "Pillow>=10.4",
   "pystray>=0.19.5",
-  "numpy>=2.2.0",
-  "sounddevice>=0.5.1",
-  "soundfile>=0.13.1",
+  "numpy>=2.0",
+  "sounddevice>=0.5",
+  "soundfile>=0.13",
+  "customtkinter>=6.0",
 ]
 
 [project.optional-dependencies]
-dev = [
-  "pytest>=8.3.0",
-]
+dev = ["pytest>=8.3"]
 
 [project.scripts]
 snapnarrate = "snap_narrate.cli:main"
 
-[tool.setuptools]
-package-dir = {"" = "src"}
+[project.gui-scripts]
+snapnarrate-gui = "snap_narrate.cli:gui_main"
+
+# Third-party addons register here; see docs/ADDONS.md.
+# [project.entry-points."snapnarrate.addons"]
+# my_addon = "my_package.addon:MyAddon"
+
+[tool.setuptools.dynamic]
+version = { attr = "snap_narrate.__version__" }
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -36,4 +41,3 @@ where = ["src"]
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
-

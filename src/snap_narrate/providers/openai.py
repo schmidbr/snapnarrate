@@ -6,10 +6,9 @@ import base64
 import logging
 from typing import Any
 
-import requests
-
 from snap_narrate.providers import prompts
 from snap_narrate.providers.base import ExtractResult
+from snap_narrate.providers.net import Session
 from snap_narrate.usage import record_openai_usage
 
 logger = logging.getLogger("snap_narrate")
@@ -40,7 +39,7 @@ class OpenAIVision:
         self.fast_mode = fast_mode
         self.ultra_fast_mode = ultra_fast_mode
         self.ultra_fast_model = ultra_fast_model.strip()
-        self._session = session or requests.Session()
+        self._session = session or Session()
 
     def extract(self, image: bytes, profile: str = "default") -> ExtractResult:
         prompt = prompts.full_prompt(self.ignore_short_lines, profile, fast_mode=self.fast_mode)

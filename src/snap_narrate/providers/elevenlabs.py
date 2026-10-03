@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-import requests
+from snap_narrate.providers.net import Session
 
 API_BASE = "https://api.elevenlabs.io/v1"
 
@@ -27,7 +27,7 @@ class ElevenLabsSpeech:
         self.speech_fast_model_id = speech_fast_model_id.strip()
         self.output_format = output_format
         self.timeout_sec = timeout_sec
-        self._session = session or requests.Session()
+        self._session = session or Session()
 
     def _headers(self) -> dict[str, str]:
         if not self.api_key:

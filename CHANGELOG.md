@@ -4,6 +4,12 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [0.7.2] - 2026-10-03
+
+### Fixed
+
+- **The first read after a break needed a second press.** After about 10 idle minutes, the server had quietly closed SnapNarrate's open connection, so the first capture failed with "Remote end closed connection without response". Requests that fail this way, before any answer arrives, are now sent again on a fresh connection. Voice requests are also no longer slowed down by a retry delay in this case.
+
 ## [0.7.1] - 2026-09-28
 
 Fixes from a code review of the 0.5–0.7 rewrite.

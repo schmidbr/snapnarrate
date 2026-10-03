@@ -1,3 +1,3 @@
 """SnapNarrate: read on-screen game text aloud with AI vision and ElevenLabs voices."""
 
-__version__ = "0.7.1"
+__version__ = "0.7.2"

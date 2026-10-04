@@ -1,3 +1,5 @@
+"""Screen capture. Produces compact JPEG/PNG bytes ready to send to a vision model."""
+
 from __future__ import annotations
 
 import io
@@ -5,115 +7,104 @@ import time
 from pathlib import Path
 from typing import Tuple
 
-from mss import mss
 from PIL import Image
 
+Bounds = Tuple[int, int, int, int]  # left, top, width, height in virtual-desktop pixels
 
-Bounds = Tuple[int, int, int, int]
+
+class CaptureCooldown(RuntimeError):
+    pass
 
 
 class ScreenCapturer:
     def __init__(
         self,
-        cooldown_ms: int,
-        save_debug: bool = False,
-        debug_dir: str = "debug_screenshots",
+        cooldown_ms: int = 1500,
         max_dimension: int = 1600,
         image_format: str = "jpeg",
         jpeg_quality: int = 85,
+        debug_dir: Path | None = None,
     ) -> None:
         self.cooldown_ms = cooldown_ms
-        self.save_debug = save_debug
-        self.debug_dir = Path(debug_dir)
         self.max_dimension = max(int(max_dimension), 0)
-        self.image_format = str(image_format).strip().lower()
-        if self.image_format == "jpg":
-            self.image_format = "jpeg"
-        if self.image_format not in {"png", "jpeg"}:
-            self.image_format = "jpeg"
+        self.image_format = "png" if image_format == "png" else "jpeg"
         self.jpeg_quality = min(max(int(jpeg_quality), 1), 100)
-        self._last_capture_ms = 0
+        self.debug_dir = debug_dir
+        self._last_capture = 0.0
 
-    def can_capture(self) -> bool:
-        now_ms = int(time.time() * 1000)
-        return (now_ms - self._last_capture_ms) >= self.cooldown_ms
+    def fullscreen(self) -> bytes:
+        """The monitor that contains the mouse cursor (usually the one the game is on)."""
+        from mss import mss
 
-    def capture_png(self) -> bytes:
-        return self.capture_fullscreen_png()
-
-    def capture_fullscreen_png(self) -> bytes:
-        if not self.can_capture():
-            raise RuntimeError("Capture cooldown active")
-
+        self._check_cooldown()
         with mss() as sct:
-            monitor = sct.monitors[1]
-            image_bytes = self._capture_monitor_png(sct, monitor)
+            monitor = _monitor_under_cursor(sct.monitors) or sct.monitors[1]
+            return self._finish(sct.grab(monitor))
 
-        self._after_capture(image_bytes)
-        return image_bytes
+    def region(self, bounds: Bounds) -> bytes:
+        from mss import mss
 
-    def capture_region_png(self, bounds: Bounds) -> bytes:
-        if not self.can_capture():
-            raise RuntimeError("Capture cooldown active")
-        x, y, width, height = bounds
+        left, top, width, height = (int(v) for v in bounds)
         if width <= 0 or height <= 0:
-            raise RuntimeError("Invalid capture region")
-
+            raise ValueError("Invalid capture region")
+        self._check_cooldown()
         with mss() as sct:
-            virtual = sct.monitors[0]
-            left = int(virtual["left"]) + int(x)
-            top = int(virtual["top"]) + int(y)
-            monitor = {"left": left, "top": top, "width": int(width), "height": int(height)}
-            image_bytes = self._capture_monitor_png(sct, monitor)
+            return self._finish(sct.grab({"left": left, "top": top, "width": width, "height": height}))
 
-        self._after_capture(image_bytes)
-        return image_bytes
-
-    def _capture_monitor_png(self, sct: mss, monitor: dict) -> bytes:
-        shot = sct.grab(monitor)
-        image = Image.frombytes("RGB", shot.size, shot.rgb)
-        image = self._prepare_image(image)
-        buf = io.BytesIO()
+    def encode(self, image: Image.Image) -> bytes:
+        image = self._downscale(image.convert("RGB"))
+        buffer = io.BytesIO()
         if self.image_format == "jpeg":
-            image.save(buf, format="JPEG", quality=self.jpeg_quality, optimize=True)
+            image.save(buffer, format="JPEG", quality=self.jpeg_quality, optimize=True)
         else:
-            image.save(buf, format="PNG", optimize=True)
-        return buf.getvalue()
+            image.save(buffer, format="PNG", optimize=True)
+        return buffer.getvalue()
 
-    def _prepare_image(self, image: Image.Image) -> Image.Image:
-        if self.max_dimension <= 0:
-            return image
-        width, height = image.size
-        largest_edge = max(width, height)
-        if largest_edge <= self.max_dimension:
-            return image
-        scale = self.max_dimension / float(largest_edge)
-        new_size = (
-            max(1, int(round(width * scale))),
-            max(1, int(round(height * scale))),
-        )
-        resampling = getattr(Image, "Resampling", Image)
-        return image.resize(new_size, resampling.LANCZOS)
+    def _check_cooldown(self) -> None:
+        elapsed_ms = (time.monotonic() - self._last_capture) * 1000
+        if self._last_capture and elapsed_ms < self.cooldown_ms:
+            raise CaptureCooldown("Capture cooldown active; try again in a moment")
 
-    def _after_capture(self, image_bytes: bytes) -> None:
-        self._last_capture_ms = int(time.time() * 1000)
-        if self.save_debug:
+    def _finish(self, shot: object) -> bytes:
+        image = Image.frombytes("RGB", shot.size, shot.rgb)  # type: ignore[attr-defined]
+        data = self.encode(image)
+        self._last_capture = time.monotonic()
+        if self.debug_dir is not None:
             self.debug_dir.mkdir(parents=True, exist_ok=True)
-            timestamp = int(time.time())
-            extension = "jpg" if self.image_format == "jpeg" else "png"
-            (self.debug_dir / f"capture_{timestamp}.{extension}").write_bytes(image_bytes)
+            suffix = "jpg" if self.image_format == "jpeg" else "png"
+            (self.debug_dir / f"capture_{int(time.time() * 1000)}.{suffix}").write_bytes(data)
+        return data
+
+    def _downscale(self, image: Image.Image) -> Image.Image:
+        if self.max_dimension <= 0 or max(image.size) <= self.max_dimension:
+            return image
+        scale = self.max_dimension / float(max(image.size))
+        size = (max(1, round(image.width * scale)), max(1, round(image.height * scale)))
+        return image.resize(size, Image.Resampling.LANCZOS)
 
 
 def normalize_bounds(x1: int, y1: int, x2: int, y2: int) -> Bounds:
-    left = min(int(x1), int(x2))
-    top = min(int(y1), int(y2))
-    width = abs(int(x2) - int(x1))
-    height = abs(int(y2) - int(y1))
-    return left, top, width, height
+    return min(x1, x2), min(y1, y2), abs(x2 - x1), abs(y2 - y1)
 
 
-def is_valid_bounds(bounds: Bounds | None, min_region_px: int) -> bool:
-    if bounds is None:
-        return False
-    _, _, width, height = bounds
-    return int(width) >= int(min_region_px) and int(height) >= int(min_region_px)
+def is_valid_bounds(bounds: Bounds | None, min_px: int) -> bool:
+    return bounds is not None and bounds[2] >= min_px and bounds[3] >= min_px
+
+
+def _monitor_under_cursor(monitors: list[dict]) -> dict | None:
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        point = wintypes.POINT()
+        if not ctypes.windll.user32.GetCursorPos(ctypes.byref(point)):
+            return None
+    except (AttributeError, OSError):
+        return None
+    for monitor in monitors[1:]:
+        if (
+            monitor["left"] <= point.x < monitor["left"] + monitor["width"]
+            and monitor["top"] <= point.y < monitor["top"] + monitor["height"]
+        ):
+            return monitor
+    return None

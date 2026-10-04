@@ -61,10 +61,14 @@ if (-not $SkipTests) {
   Invoke-Checked "tests" { & $Py -m pytest -q }
 }
 
-# A running copy locks files in the output folder.
+# A running copy locks files in the output folder. Match the folder's tail, not the full path:
+# when the build runs inside a packaged (MSIX) app such as Claude, %LOCALAPPDATA% is redirected,
+# so a copy started from Explorer reports a different full path for the same folder.
+$AppTail = "\" + (Split-Path $OutDir -Leaf) + "\SnapNarrate\"
 Get-Process -Name "SnapNarrate", "snapnarrate-cli" -ErrorAction SilentlyContinue |
-  Where-Object { $_.Path -and $_.Path.StartsWith($OutDir, [StringComparison]::OrdinalIgnoreCase) } |
+  Where-Object { $_.Path -and $_.Path.IndexOf($AppTail, [StringComparison]::OrdinalIgnoreCase) -ge 0 } |
   Stop-Process -Force
+Start-Sleep -Milliseconds 500  # let Windows release the stopped exe's file locks
 
 # Work files go to %TEMP%: inside a OneDrive folder, sync locks them and --clean fails with "Access is denied".
 $WorkPath = Join-Path $env:TEMP "snapnarrate-pyinstaller"
